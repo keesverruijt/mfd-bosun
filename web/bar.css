@@ -8,8 +8,8 @@
   a { color: var(--accent); }
   main { flex: 1; min-height: 0; display: flex; position: relative; overflow: hidden; }
   #wrap { position: relative; flex: 1; min-width: 0; }
-  #depth { position: absolute; left: 8px; top: 24px; z-index: 2; background: #000b; color: #fff; padding: 4px 10px 6px; border-radius: 4px; font-size: 30px; font-weight: 700; line-height: 1; }
-  #depth small { display: block; font-size: 11px; font-weight: 400; color: var(--dim); margin-bottom: 3px; }
+  #depth { position: absolute; left: 8px; top: 24px; z-index: 2; background: #000b; color: #fff; padding: 6px 14px 10px; border-radius: 6px; font-size: 60px; font-weight: 700; line-height: 1; }
+  #depth small { display: block; font-size: 16px; font-weight: 400; color: var(--dim); margin-bottom: 3px; }
   #status:empty, #status[hidden] { display: none }
   #paused { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 3; pointer-events: none; font-size: 72px; font-weight: 700; color: #fff; text-shadow: 0 0 12px #000, 0 0 3px #000; }
   #paused[hidden] { display: none; }

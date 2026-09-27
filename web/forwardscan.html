@@ -36,6 +36,8 @@
     <input id="hratio" type="range" min="0" max="80" step="1" value="35"></div>
   <label class="row" title="The sonar's zones: red at its critical depth and range, yellow at 1.5 times that; the bottom turns yellow / red where it enters them"><span>Zones</span><input id="zones" class="switch" type="checkbox"></label>
   <label class="row" title="The sonar's guideline from the boat"><span>Guideline</span><input id="guide" class="switch" type="checkbox"></label>
+  <div class="row" title="Depths and distances in metres or feet"><span>Units</span>
+    <div class="seg" data-for="units"></div><select id="units"><option value="m" selected>Metres</option><option value="ft">Feet</option></select></div>
   <div class="row" title="The displays' palettes 1-3"><span>Palette</span>
     <div class="seg" data-for="pal"></div><select id="pal"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select></div>
   <div class="row" title="Like the displays' Color setting (0-100)"><span>Color</span><output id="colorv"></output>
@@ -69,7 +71,8 @@ const echoes = [] // the echo records (Uint8Array, 5 bytes each) of the last pin
 const DRAWN_PINGS = 4 // the displays draw the last 4 pings
 const RANGE_CELL_M = 0.023332685 * 0.3048
 const pointsSel = document.getElementById('points'), palSel = document.getElementById('pal'), colorEl = document.getElementById('color')
-for (const [el, key] of [[pointsSel, 'points'], [palSel, 'pal'], [colorEl, 'color']]) {
+const unitsSel = document.getElementById('units')
+for (const [el, key] of [[pointsSel, 'points'], [palSel, 'pal'], [colorEl, 'color'], [unitsSel, 'units']]) {
   try { const v = localStorage.getItem('navico-fs-' + key); if (v !== null) el.value = v } catch (_) {}
   el.addEventListener('input', () => { try { localStorage.setItem('navico-fs-' + key, el.value) } catch (_) {} draw() })
 }
@@ -78,6 +81,14 @@ const NICE = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200]
 const hist = [] // the depth under the boat (m) of the latest pings, newest first (the sonar adds a ping's depth when >= 2 ft)
 const HIST_FORWARD = 50, HIST_STRIP = 350 // newest 50 lead up to the profile in the forward view, 350 in the history strip
 const FT = 0.3048
+// Everything is kept in metres; only what is shown is converted (Units setting).
+const feet = () => unitsSel.value === 'ft'
+const toUnit = (m) => feet() ? m / FT : m
+const fromUnit = (v) => feet() ? v * FT : v
+const unitName = () => feet() ? 'ft' : 'm'
+const r1 = x => Math.round(x * 10) / 10
+// a tick step giving at most `ticks` ticks up to max (in the shown unit)
+const tickStep = (max, ticks) => [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500].find(s => max / s <= ticks) || 1000
 const histEl = document.getElementById('hratio'), zonesEl = document.getElementById('zones'), guideEl = document.getElementById('guide')
 for (const [el, key] of [[histEl, 'hratio'], [zonesEl, 'zones'], [guideEl, 'guide']]) {
   const val = () => el.type === 'checkbox' ? String(el.checked) : el.value
@@ -185,13 +196,15 @@ function draw () {
   }
 
   // scales: forward range along the top of the forward view, depth down its left edge
-  ctx.font = `${11 * f}px system-ui`; ctx.fillStyle = ink; ctx.textBaseline = 'top'
-  const xs = xMax <= 10 ? 1 : xMax <= 30 ? 5 : xMax <= 75 ? 10 : 25
-  for (let m = xs; m < xMax; m += xs) { ctx.textAlign = 'center'; ctx.fillText(m + ' m', X(m), 3 * f) }
-  const ys = yMax <= 6 ? 1 : yMax <= 15 ? 2 : yMax <= 40 ? 5 : 10
+  ctx.font = `${22 * f}px system-ui`; ctx.fillStyle = ink; ctx.textBaseline = 'top'
+  const u = unitName(), xMaxU = toUnit(xMax), yMaxU = toUnit(yMax)
+  const xs = tickStep(xMaxU, 6)
+  ctx.textAlign = 'center'
+  for (let v = xs; v < xMaxU; v += xs) ctx.fillText(v + ' ' + u, X(fromUnit(v)), 6 * f)
+  const ys = tickStep(yMaxU, 8)
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
-  for (let m = ys; m < yMax; m += ys) ctx.fillText(m + ' m', ox + 4 * f, Y(m))
-  if (ox > 30 * f) { ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('Now', ox - 4 * f, 3 * f) }
+  for (let v = ys; v < yMaxU; v += ys) ctx.fillText(v + ' ' + u, ox + 8 * f, Y(fromUnit(v)))
+  if (ox > 60 * f) { ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('Now', ox - 8 * f, 6 * f) }
 }
 
 // NOS Point data: each record at theta = transducer angle + angle, forward = r cos(theta), depth = r sin(theta),
@@ -247,7 +260,7 @@ function onPing (m) {
   if (m.depth >= 2 * FT) { hist.unshift(m.depth); if (hist.length > HIST_STRIP) hist.pop() }
   recent.push({ x: Math.max(0, ...m.points.map(p => p[0])), y: Math.max(m.depth, ...m.points.map(p => p[1])) })
   if (recent.length > 30) recent.shift()
-  if (m.depth > 0) depthEl.textContent = m.depth.toFixed(1) + ' m'
+  showDepth()
   draw()
 }
 
@@ -269,20 +282,26 @@ srcSel.onchange = () => { filterAddr = srcSel.value; last = null; recent.length 
 const ctlEl = document.getElementById('ctl'), pauseEl = document.getElementById('pause')
 const depthSel = document.getElementById('cdepth'), rangeSel = document.getElementById('crange'), noiseSel = document.getElementById('cnoise')
 const pausedEl = document.getElementById('paused')
-const DEPTHS = [3, 5, 10, 15, 20, 30, 50], RANGES = [10, 15, 20, 30, 50, 75, 100]
+const STEPS = { // the Depth and Forward choices, in the shown unit
+  m: { depth: [3, 5, 10, 15, 20, 30, 50], range: [10, 15, 20, 30, 50, 75, 100] },
+  ft: { depth: [10, 15, 30, 50, 75, 100, 150], range: [30, 50, 75, 100, 150, 250, 300] }
+}
 const fsSettings = {} // address -> settings
 function pickSettings () { return fsSettings[filterAddr] || (filterAddr ? null : Object.values(fsSettings)[0]) || null }
-function fillSteps (sel, steps, cur) {
+function fillSteps (sel, steps, cur) { // steps and cur in the shown unit
   const vals = cur === undefined || steps.includes(cur) ? steps : [...steps, cur].sort((a, b) => a - b)
-  sel.innerHTML = '<option value="auto">Auto</option>' + vals.map(v => `<option value="${v}">${v} m</option>`).join('')
+  sel.innerHTML = '<option value="auto">Auto</option>' + vals.map(v => `<option value="${v}">${v} ${unitName()}</option>`).join('')
+}
+function showDepth () {
+  depthEl.textContent = last && last.depth > 0 ? toUnit(last.depth).toFixed(1) + ' ' + unitName() : '--'
 }
 function showSettings () {
   const s = pickSettings()
   if (!s) return
-  const r1 = x => Math.round(x * 10) / 10
-  fillSteps(depthSel, DEPTHS, s.autoRange ? undefined : r1(s.depth)); fillSteps(rangeSel, RANGES, s.autoRange ? undefined : r1(s.range))
-  depthSel.value = s.autoRange ? 'auto' : String(r1(s.depth)); rangeSel.value = s.autoRange ? 'auto' : String(r1(s.range))
-  depthSel.title = rangeSel.title = s.autoRange ? `auto: now ${r1(s.depth)} m deep, ${r1(s.range)} m ahead` : ''
+  const d = r1(toUnit(s.depth)), r = r1(toUnit(s.range)), u = unitName(), steps = STEPS[unitsSel.value] || STEPS.m
+  fillSteps(depthSel, steps.depth, s.autoRange ? undefined : d); fillSteps(rangeSel, steps.range, s.autoRange ? undefined : r)
+  depthSel.value = s.autoRange ? 'auto' : String(d); rangeSel.value = s.autoRange ? 'auto' : String(r)
+  depthSel.title = rangeSel.title = s.autoRange ? `auto: now ${d} ${u} deep, ${r} ${u} ahead` : ''
   noiseSel.value = s.autoNoiseRejection ? 'auto' : String(s.noiseRejection)
   pauseEl.textContent = s.running ? 'Pause' : 'Run'; pauseEl.classList.toggle('paused', !s.running)
   pausedEl.hidden = s.running; statusEl.hidden = !s.running
@@ -296,8 +315,10 @@ function sendControl (change) {
   })).catch(e => { statusEl.textContent = 'control failed: ' + e.message }) // the selectors follow the sonar's next broadcast (~2 s)
 }
 pauseEl.onclick = () => { const s = pickSettings(); if (s) sendControl({ paused: s.running }) }
-depthSel.onchange = () => sendControl(depthSel.value === 'auto' ? { autoRange: true } : { depth: Number(depthSel.value) })
-rangeSel.onchange = () => sendControl(rangeSel.value === 'auto' ? { autoRange: true } : { range: Number(rangeSel.value) })
+// the API takes metres
+depthSel.onchange = () => sendControl(depthSel.value === 'auto' ? { autoRange: true } : { depth: fromUnit(Number(depthSel.value)) })
+rangeSel.onchange = () => sendControl(rangeSel.value === 'auto' ? { autoRange: true } : { range: fromUnit(Number(rangeSel.value)) })
+unitsSel.addEventListener('input', () => { showDepth(); showSettings() })
 noiseSel.onchange = () => sendControl({ noiseRejection: noiseSel.value })
 
 const netEl = document.getElementById('net')

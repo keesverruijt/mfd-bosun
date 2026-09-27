@@ -291,9 +291,17 @@ const STEPS = { // the Depth and Forward choices, in the shown unit
 }
 const fsSettings = {} // address -> settings
 function pickSettings () { return fsSettings[filterAddr] || (filterAddr ? null : Object.values(fsSettings)[0]) || null }
-function fillSteps (sel, steps, cur) { // steps and cur in the shown unit
+// Set a control to what the sonar reports. Only touches it when something changed, and not while it is being
+// used: rewriting an open drop-down makes the chartplotter's browser close and redraw it (a flash).
+function setSelect (sel, html, value, title) {
+  if (document.activeElement === sel) return
+  if (html !== null && sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html }
+  if (sel.value !== value) sel.value = value
+  if (sel.title !== title) sel.title = title
+}
+function stepOptions (steps, cur) { // steps and cur in the shown unit
   const vals = cur === undefined || steps.includes(cur) ? steps : [...steps, cur].sort((a, b) => a - b)
-  sel.innerHTML = '<option value="auto">Auto</option>' + vals.map(v => `<option value="${v}">${v} ${unitName()}</option>`).join('')
+  return '<option value="auto">Auto</option>' + vals.map(v => `<option value="${v}">${v} ${unitName()}</option>`).join('')
 }
 function showDepth () {
   depthEl.textContent = last && last.depth > 0 ? toUnit(last.depth).toFixed(1) + ' ' + unitName() : '--'
@@ -302,10 +310,10 @@ function showSettings () {
   const s = pickSettings()
   if (!s) return
   const d = r1(toUnit(s.depth)), r = r1(toUnit(s.range)), u = unitName(), steps = STEPS[unitsSel.value] || STEPS.m
-  fillSteps(depthSel, steps.depth, s.autoRange ? undefined : d); fillSteps(rangeSel, steps.range, s.autoRange ? undefined : r)
-  depthSel.value = s.autoRange ? 'auto' : String(d); rangeSel.value = s.autoRange ? 'auto' : String(r)
-  depthSel.title = rangeSel.title = s.autoRange ? `auto: now ${d} ${u} deep, ${r} ${u} ahead` : ''
-  noiseSel.value = s.autoNoiseRejection ? 'auto' : String(s.noiseRejection)
+  const title = s.autoRange ? `auto: now ${d} ${u} deep, ${r} ${u} ahead` : ''
+  setSelect(depthSel, stepOptions(steps.depth, s.autoRange ? undefined : d), s.autoRange ? 'auto' : String(d), title)
+  setSelect(rangeSel, stepOptions(steps.range, s.autoRange ? undefined : r), s.autoRange ? 'auto' : String(r), title)
+  setSelect(noiseSel, null, s.autoNoiseRejection ? 'auto' : String(s.noiseRejection), '')
   pauseEl.textContent = s.running ? 'Pause' : 'Run'; pauseEl.classList.toggle('paused', !s.running)
   pausedEl.hidden = s.running; statusEl.hidden = !s.running
 }
@@ -323,6 +331,8 @@ depthSel.onchange = () => sendControl(depthSel.value === 'auto' ? { autoRange: t
 rangeSel.onchange = () => sendControl(rangeSel.value === 'auto' ? { autoRange: true } : { range: fromUnit(Number(rangeSel.value)) })
 unitsSel.addEventListener('input', () => { showDepth(); showSettings() })
 noiseSel.onchange = () => sendControl({ noiseRejection: noiseSel.value })
+// once chosen, let go of the drop-down, so it follows what the sonar reports again
+for (const sel of [depthSel, rangeSel, noiseSel]) sel.addEventListener('change', () => sel.blur())
 
 const netEl = document.getElementById('net')
 // The network note is ok exactly when a settings change can reach the sonar (a 169.254 address on its

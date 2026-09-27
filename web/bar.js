@@ -10,7 +10,9 @@ const Bar = {
     let idle = null
     const setOpen = (open) => {
       bar.classList.toggle('open', open); menu.setAttribute('aria-expanded', open)
-      clearTimeout(idle); if (open) idle = setTimeout(() => setOpen(false), IDLE_MS)
+      clearTimeout(idle)
+      // not while a drop-down of the bar is in use (its list is open)
+      if (open) idle = setTimeout(() => setOpen(document.activeElement?.tagName === 'SELECT' && bar.contains(document.activeElement)), IDLE_MS)
     }
     menu.onclick = () => setOpen(!bar.classList.contains('open'))
     for (const ev of ['pointerdown', 'input', 'wheel', 'scroll']) {

@@ -53,7 +53,7 @@
 <script src="bar.js"></script>
 <script>
 // ForwardScan of a sonar (see src/protocol.rs): each ping is the bottom's outline ahead of the
-// boat, [forward range m, depth m] points, plus the depth under the boat, plus 3000 echo records
+// boat, [forward range ft, depth ft] points, plus the depth under the boat, plus 3000 echo records
 // (angle, range, amplitude) that the sonar draws as "Point data" dots. Same-origin WebSocket on
 // neon-forwardscan's server; ?ws=PORT or ?ws=ws://host:port overrides it for offline dev.
 const BASE = location.pathname.replace(/[^/]*$/, '')
@@ -69,7 +69,7 @@ const depthEl = document.getElementById('depthv'), statusEl = document.getElemen
 let W = 0, H = 0, filterAddr = '', last = null
 const echoes = [] // the echo records (Uint8Array, 5 bytes each) of the last pings, newest last
 const DRAWN_PINGS = 4 // the displays draw the last 4 pings
-const RANGE_CELL_M = 0.023332685 * 0.3048
+const RANGE_CELL_FT = 0.023332685
 const pointsSel = document.getElementById('points'), palSel = document.getElementById('pal'), colorEl = document.getElementById('color')
 const unitsSel = document.getElementById('units')
 for (const [el, key] of [[pointsSel, 'points'], [palSel, 'pal'], [colorEl, 'color'], [unitsSel, 'units']]) {
@@ -77,15 +77,15 @@ for (const [el, key] of [[pointsSel, 'points'], [palSel, 'pal'], [colorEl, 'colo
   el.addEventListener('input', () => { try { localStorage.setItem('navico-fs-' + key, el.value) } catch (_) {} draw() })
 }
 const recent = [] // max forward range / depth of the last pings, for a scale when the sonar's settings are not known
-const NICE = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200]
-const hist = [] // the depth under the boat (m) of the latest pings, newest first (the sonar adds a ping's depth when >= 2 ft)
+const NICE = [10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 500] // ft
+const hist = [] // the depth under the boat (ft) of the latest pings, newest first (the sonar adds a ping's depth when >= 2 ft)
 const HIST_FORWARD = 50, HIST_STRIP = 350 // newest 50 lead up to the profile in the forward view, 350 in the history strip
-const FT = 0.3048
-// Everything is kept in metres; only what is shown is converted (Units setting).
-const feet = () => unitsSel.value === 'ft'
-const toUnit = (m) => feet() ? m / FT : m
-const fromUnit = (v) => feet() ? v * FT : v
-const unitName = () => feet() ? 'ft' : 'm'
+const M_PER_FT = 0.3048
+// Everything is kept in feet, as the sonar has it; only what is shown is converted (Units setting).
+const metres = () => unitsSel.value !== 'ft'
+const toUnit = (ft) => metres() ? ft * M_PER_FT : ft
+const fromUnit = (v) => metres() ? v / M_PER_FT : v
+const unitName = () => metres() ? 'm' : 'ft'
 const r1 = x => Math.round(x * 10) / 10
 // a tick step giving at most `ticks` ticks up to max (in the shown unit)
 const tickStep = (max, ticks) => [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500].find(s => max / s <= ticks) || 1000
@@ -149,9 +149,9 @@ function draw () {
   const vs = pickSettings()
   const maxX = Math.max(...recent.map(r => r.x), 1), maxY = Math.max(...recent.map(r => r.y), 1)
   const xMax = vs ? vs.range : NICE.find(n => n >= maxX) || Math.ceil(maxX)
-  const yMax = vs ? vs.depth : Math.max(3, Math.ceil(maxY * 1.5 * 2) / 2)
+  const yMax = vs ? vs.depth : Math.max(10, Math.ceil(maxY * 1.5))
   const ox = Math.trunc(W * parseInt(histEl.value, 10) / 100)
-  const X = m => ox + m * (W - ox) / xMax, Y = m => m * H / yMax
+  const X = ft => ox + ft * (W - ox) / xMax, Y = ft => ft * H / yMax
   const angle = vs ? vs.transducerAngle : 30
 
   // the bottom ahead: the newest 50 depths under the boat lead from the boat to the first profile point, then the
@@ -190,8 +190,8 @@ function draw () {
     strokePoly(hp, ink, 2 * f)
   }
   strokePoly([[ox + 0.5, 0], [ox + 0.5, H]], ink, f, [4 * f, 4 * f])
-  if (guideEl.checked) { // the sonar's guideline: from the boat to depthFt * 0.2034 ft ahead at the bottom of the view (whole feet)
-    const g = Math.trunc(yMax / FT * 0.20336829) * FT
+  if (guideEl.checked) { // the sonar's guideline: from the boat to depth * 0.2034 ft ahead at the bottom of the view (whole feet)
+    const g = Math.trunc(yMax * 0.20336829)
     strokePoly([[ox, 0], [ox + (W - ox) * g / xMax, H]], ink, 3 * f, [6 * f, 6 * f])
   }
 
@@ -225,7 +225,7 @@ function drawPoints (X, Y, xMax, yMax, angleDeg, f) {
       if (c === 255 && a === 0) continue // padding
       const th = (angleDeg + a / 512) * Math.PI / 180
       if (!(th > 0 && th < Math.PI / 2)) continue
-      const r = dv.getUint16(o + 2, true) * RANGE_CELL_M
+      const r = dv.getUint16(o + 2, true) * RANGE_CELL_FT
       const fwd = r * Math.cos(th), dep = r * Math.sin(th)
       if (fwd > xMax || dep > yMax) continue
       let b = buckets.get(row[c]); if (!b) buckets.set(row[c], b = [])
@@ -239,8 +239,8 @@ function drawPoints (X, Y, xMax, yMax, angleDeg, f) {
   }
 }
 
-// binary frame from the plugin (index.js packForward):
-//   [0x02][0][4B src IPv4][u32 seq][f32 depth m][u16 nPoints][u16 nEcho][nPoints x 2 f32][nEcho x 5-byte records]
+// binary frame from the server (src/protocol.rs pack_frame), in feet:
+//   [0x02][0][4B src IPv4][u32 seq][f32 depth ft][u16 nPoints][u16 nEcho][nPoints x 2 f32 ft][nEcho x 5-byte records]
 function parseFrame (buf) {
   const dv = new DataView(buf)
   if (dv.getUint8(0) !== 0x02) return null
@@ -260,7 +260,7 @@ function onPing (m) {
   if (filterAddr && m.address !== filterAddr) return
   last = m
   echoes.push(m.echo); if (echoes.length > DRAWN_PINGS) echoes.shift()
-  if (m.depth >= 2 * FT) { hist.unshift(m.depth); if (hist.length > HIST_STRIP) hist.pop() }
+  if (m.depth >= 2) { hist.unshift(m.depth); if (hist.length > HIST_STRIP) hist.pop() }
   recent.push({ x: Math.max(0, ...m.points.map(p => p[0])), y: Math.max(m.depth, ...m.points.map(p => p[1])) })
   if (recent.length > 30) recent.shift()
   showDepth()
@@ -318,7 +318,7 @@ function sendControl (change) {
   })).catch(e => { statusEl.textContent = 'control failed: ' + e.message }) // the selectors follow the sonar's next broadcast (~2 s)
 }
 pauseEl.onclick = () => { const s = pickSettings(); if (s) sendControl({ paused: s.running }) }
-// the API takes metres
+// the API takes feet
 depthSel.onchange = () => sendControl(depthSel.value === 'auto' ? { autoRange: true } : { depth: fromUnit(Number(depthSel.value)) })
 rangeSel.onchange = () => sendControl(rangeSel.value === 'auto' ? { autoRange: true } : { range: fromUnit(Number(rangeSel.value)) })
 unitsSel.addEventListener('input', () => { showDepth(); showSettings() })

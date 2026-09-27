@@ -32,7 +32,6 @@ pub const PORT: u16 = 10755;
 pub const CONTROL_PORT: u16 = 10756;
 pub const NOISE_LEVELS: [&str; 4] = ["off", "low", "medium", "high"];
 
-const FT_TO_M: f32 = 0.3048;
 const HEADER: usize = 30;
 const CONTROL_LEN: usize = 104;
 const ECHO_COUNT: usize = 0x202; // offset in the echo block of the record count; the records start at 0x205
@@ -47,9 +46,9 @@ fn f32_at(b: &[u8], o: usize) -> f32 {
 
 pub struct Ping {
     pub seq: u32,
-    /// Depth under the boat in metres, 0 when unknown.
+    /// Depth under the boat in feet (like everything here: the sonar's unit), 0 when unknown.
     pub depth: f32,
-    /// The bottom ahead: (forward m, depth m).
+    /// The bottom ahead: (forward ft, depth ft).
     pub points: Vec<(f32, f32)>,
     /// The echo records as the sonar sent them, 5 bytes each.
     pub echo: Vec<u8>,
@@ -135,7 +134,7 @@ pub fn decode_ping(header: &[u8], payload: &[u8], seq: u32) -> Ping {
         if !((0.0..1000.0).contains(&x) && (0.0..1000.0).contains(&y)) {
             break; // not a plausible point: end of the profile
         }
-        points.push((x * FT_TO_M, y * FT_TO_M));
+        points.push((x, y));
         o += 8;
     }
     let mut echo = Vec::new();
@@ -147,7 +146,7 @@ pub fn decode_ping(header: &[u8], payload: &[u8], seq: u32) -> Ping {
         echo = payload[start..start + n * 5].to_vec();
     }
     let depth = if depth_ft > 0.0 && depth_ft < 1000.0 {
-        depth_ft * FT_TO_M
+        depth_ft
     } else {
         0.0
     };
@@ -188,26 +187,26 @@ pub fn parse_control(buf: &[u8]) -> Option<Settings> {
     if !is_control(buf) {
         return None;
     }
-    let m = |o| round(f32_at(buf, o) * FT_TO_M, 2);
+    let ft = |o| round(f32_at(buf, o), 2);
     let nr = i32::from_le_bytes(buf[0x15..0x19].try_into().unwrap());
     Some(Settings {
         from_sonar: buf[1] & 1 == 1,
         running: buf[0x14] != 0,
-        depth: m(0x0c),
-        range: m(0x10),
+        depth: ft(0x0c),
+        range: ft(0x10),
         auto_range: buf[0x19] != 0,
         noise_rejection: match NOISE_LEVELS.get(nr as usize) {
             Some(s) if nr >= 0 => (*s).into(),
             _ => nr.into(),
         },
         auto_noise_rejection: buf[0x1b] != 0,
-        critical_depth: m(0x1c),
-        critical_range: m(0x20),
+        critical_depth: ft(0x1c),
+        critical_range: ft(0x20),
         transducer_angle: round(f32_at(buf, 0x47), 2),
     })
 }
 
-/// A change requested by the web page / REST API. Depth and range in metres; a fixed depth or
+/// A change requested by the web page / REST API. Depth and range in feet; a fixed depth or
 /// range turns auto range off. `noise_rejection`: "auto" or one of NOISE_LEVELS.
 #[derive(serde::Deserialize, Default, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -251,20 +250,20 @@ pub fn build_control(latest: &[u8], change: &Change) -> Result<Vec<u8>, String> 
     let mut b = latest.to_vec();
     b[1] = 0x02;
     let feet = |name: &str, v: f32, max: f32| -> Result<[u8; 4], String> {
-        if !(v >= 1.0 && v <= max) {
-            return Err(format!("{name} must be 1 to {max} m"));
+        if !(v >= 3.0 && v <= max) {
+            return Err(format!("{name} must be 3 to {max} ft"));
         }
-        Ok((v / FT_TO_M).to_le_bytes())
+        Ok(v.to_le_bytes())
     };
     if let Some(p) = change.paused {
         b[0x14] = if p { 0 } else { 1 };
     }
     if let Some(d) = change.depth {
-        b[0x0c..0x10].copy_from_slice(&feet("depth", d, 100.0)?);
+        b[0x0c..0x10].copy_from_slice(&feet("depth", d, 330.0)?);
         b[0x19] = 0;
     }
     if let Some(r) = change.range {
-        b[0x10..0x14].copy_from_slice(&feet("range", r, 200.0)?);
+        b[0x10..0x14].copy_from_slice(&feet("range", r, 660.0)?);
         b[0x19] = 0;
     }
     if let Some(a) = change.auto_range {
@@ -285,8 +284,8 @@ pub fn build_control(latest: &[u8], change: &Change) -> Result<Vec<u8>, String> 
 }
 
 /// The binary WebSocket frame the page draws (same as the Signal K plugin's, 20-byte header):
-///   [0x02][0][4B src IPv4][u32 seq][f32 depth m][u16 nPoints][u16 nEcho][2 bytes 0]
-///   [nPoints x (f32 forward m, f32 depth m)][nEcho x 5-byte echo records as the sonar sent them]
+///   [0x02][0][4B src IPv4][u32 seq][f32 depth ft][u16 nPoints][u16 nEcho][2 bytes 0]
+///   [nPoints x (f32 forward ft, f32 depth ft)][nEcho x 5-byte echo records as the sonar sent them]
 pub fn pack_frame(source: Ipv4Addr, p: &Ping) -> Vec<u8> {
     let mut b = Vec::with_capacity(20 + p.points.len() * 8 + p.echo.len());
     b.extend_from_slice(&[0x02, 0]);
@@ -327,20 +326,20 @@ mod tests {
             Settings {
                 from_sonar: true,
                 running: true,
-                depth: 10.67,
-                range: 33.53,
+                depth: 35.0,
+                range: 110.0,
                 auto_range: true,
                 noise_rejection: "medium".into(),
                 auto_noise_rejection: true,
-                critical_depth: 3.05,
-                critical_range: 30.48,
+                critical_depth: 10.0,
+                critical_range: 100.0,
                 transducer_angle: 30.0,
             }
         );
         let b = build_control(
             &live,
             &Change {
-                range: Some(15.0),
+                range: Some(50.0),
                 ..Default::default()
             },
         )
@@ -350,7 +349,7 @@ mod tests {
         let s = parse_control(&b).unwrap();
         assert_eq!(
             (s.from_sonar, s.range, s.auto_range, s.depth),
-            (false, 15.0, false, 10.67)
+            (false, 50.0, false, 35.0)
         );
         assert_eq!(b[0x1c..], live[0x1c..]); // calibration and sensor parameters untouched
 
@@ -463,9 +462,9 @@ mod tests {
         }
         let p = got.expect("a ping");
         assert_eq!(p.seq, 100);
-        assert!((p.depth - 19.5 * FT_TO_M).abs() < 1e-4);
+        assert!((p.depth - 19.5).abs() < 1e-4);
         assert_eq!(p.points.len(), 3);
-        assert!((p.points[2].0 - 82.0 * FT_TO_M).abs() < 1e-4);
+        assert!((p.points[2].0 - 82.0).abs() < 1e-4);
         assert_eq!(p.echo.len(), 15);
         assert_eq!(&p.echo[..5], &[0x00, 0xfe, 100, 0, 200]);
 

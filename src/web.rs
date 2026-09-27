@@ -3,6 +3,7 @@
 //!   GET  /stream          -> WebSocket: binary ForwardScan frames, JSON config/sources/settings/network messages
 //!   GET  /api/state       -> { allowControl, forwardScan: [{ address, name, settings }], network }
 //!   POST /api/forwardscan -> { source?, paused?, depth?, range?, autoRange?, noiseRejection? }
+//! Depths and distances are in feet throughout (frames, settings, API), as the sonar has them.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State as AxState;

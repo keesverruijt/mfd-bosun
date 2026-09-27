@@ -200,7 +200,10 @@ function draw () {
   const u = unitName(), xMaxU = toUnit(xMax), yMaxU = toUnit(yMax)
   const xs = tickStep(xMaxU, 6)
   ctx.textAlign = 'center'
-  for (let v = xs; v < xMaxU; v += xs) ctx.fillText(v + ' ' + u, X(fromUnit(v)), 6 * f)
+  for (let v = xs; v <= xMaxU + 0.01; v += xs) { // the last one may sit on the right edge: keep it inside the view
+    const t = v + ' ' + u, w = ctx.measureText(t).width
+    ctx.fillText(t, Math.min(X(fromUnit(v)), W - w / 2 - 4 * f), 6 * f)
+  }
   const ys = tickStep(yMaxU, 8)
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
   for (let v = ys; v < yMaxU; v += ys) ctx.fillText(v + ' ' + u, ox + 8 * f, Y(fromUnit(v)))

@@ -19,7 +19,7 @@
   #bar { position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; width: min(290px, 90%); font-size: 17px; background: var(--bar); border-left: 1px solid var(--line); overflow-y: auto; padding-bottom: 8px;
     transform: translateX(100%); visibility: hidden; transition: transform .2s ease, visibility 0s linear .2s; box-shadow: -6px 0 18px #0008; }
   #bar.open { transform: none; visibility: visible; transition: transform .2s ease; }
-  #menu { position: absolute; top: 14px; right: 14px; z-index: 4; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
+  #menu { position: absolute; top: 40px; right: 14px; z-index: 4; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
     border: 0; border-radius: 10px; background: #1c1f23e6; color: #fff; box-shadow: 0 1px 4px #0006; }
   #menu:active { background: var(--accent); }
   #bar h2 { margin: 0; padding: 14px 14px 8px; font-size: 14px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }

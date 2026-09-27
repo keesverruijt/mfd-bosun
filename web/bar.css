@@ -45,3 +45,4 @@
   .switch:checked::after { left: 20px; background: #fff; }
   .note { padding: 6px 14px 10px; font-size: 14px; color: var(--dim); overflow-wrap: anywhere; }
   .note.warn { color: #ffb74d; }
+  #ctl.off button, #ctl.off .row { opacity: .4; }

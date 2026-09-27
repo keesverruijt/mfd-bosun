@@ -27,6 +27,7 @@
     <label class="row inline"><span>Noise rejection</span><select id="cnoise">
       <option value="auto">Auto</option><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
     </select></label>
+    <div class="note warn" id="ctloff" hidden>These settings cannot be changed from here: see Network below.</div>
   </div>
   <h2>View</h2>
   <div class="row" title="The sonar's Point data: the echoes of the last 4 pings as dots, over the bottom (All) or under it (Objects)"><span>Point data</span>
@@ -300,6 +301,12 @@ rangeSel.onchange = () => sendControl(rangeSel.value === 'auto' ? { autoRange: t
 noiseSel.onchange = () => sendControl({ noiseRejection: noiseSel.value })
 
 const netEl = document.getElementById('net')
+// The network note is ok exactly when a settings change can reach the sonar (a 169.254 address on its
+// interface); without that the controls are greyed out.
+function setControllable (ok) {
+  ctlEl.classList.toggle('off', !ok); document.getElementById('ctloff').hidden = ok
+  for (const el of ctlEl.querySelectorAll('button, select')) el.disabled = !ok
+}
 let quiet = null
 let instance = null
 function connect () {
@@ -320,7 +327,7 @@ function connect () {
       instance = m.instance
       ctlEl.hidden = document.getElementById('ctlh').hidden = !m.allowControl
     }
-    else if (m.type === 'network') { netEl.textContent = m.text; netEl.classList.toggle('warn', !m.ok) }
+    else if (m.type === 'network') { netEl.textContent = m.text; netEl.classList.toggle('warn', !m.ok); setControllable(m.ok) }
     else if (m.type === 'forwardscanSettings') { fsSettings[m.address] = m.settings; showSettings(); draw() }
   }
 }

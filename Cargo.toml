@@ -1,0 +1,32 @@
+[package]
+name = "neon-forwardscan"
+version = "0.1.0"
+edition = "2021"
+description = "Shows a Navico NOS sonar device's ForwardScan in a web page and advertises it to the Navico/B&G/Simrad/Lowrance chartplotters"
+license = "Apache-2.0"
+authors = ["Kees Verruijt <kees@verruijt.net>"]
+
+[dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+clap = { version = "4.6", features = ["derive"] }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+log = "0.4"
+network-interface = "2.0.5"
+rust-embed = "8.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+socket2 = { version = "0.6", features = ["all"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros", "signal", "sync", "process"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -4,8 +4,9 @@ Shows the ForwardScan of a Navico NOS sonar device (a chartplotter with a Forwar
 SonarHub) in a web page, and advertises that page so it shows up as a ForwardScan tile on Navico
 NEON chartplotters. 
 
-One small program, no installation: a static binary for Linux (e.g. a Raspberry Pi), a
-self-contained one for macOS and for Windows. 
+![ForwardScan on a Zeus SRX-16](docs/screenshot.png)
+
+The software consists of a small program that installs super easily.
 
 The protocol was reverse-engineered from network captures; see [src/protocol.rs](src/protocol.rs). 
 Tested with a Vulcan 7R, with a Zeus SRX-16 showing the page.

@@ -277,6 +277,7 @@ function updateSources (list) {
     srcSel.appendChild(o)
   }
   srcSel.value = [...srcSel.options].some(o => o.value === cur) ? cur : ''
+  Bar.refresh(srcSel)
   filterAddr = srcSel.value
 }
 srcSel.onchange = () => { filterAddr = srcSel.value; last = null; recent.length = 0; echoes.length = 0; hist.length = 0; depthEl.textContent = '--'; showSettings(); draw() }
@@ -291,13 +292,13 @@ const STEPS = { // the Depth and Forward choices, in the shown unit
 }
 const fsSettings = {} // address -> settings
 function pickSettings () { return fsSettings[filterAddr] || (filterAddr ? null : Object.values(fsSettings)[0]) || null }
-// Set a control to what the sonar reports. Only touches it when something changed, and not while it is being
-// used: rewriting an open drop-down makes the chartplotter's browser close and redraw it (a flash).
+// Set a control to what the sonar reports: only when something changed, and not while its list is open.
 function setSelect (sel, html, value, title) {
-  if (document.activeElement === sel) return
+  if (Bar.picking(sel)) return
   if (html !== null && sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html }
   if (sel.value !== value) sel.value = value
   if (sel.title !== title) sel.title = title
+  Bar.refresh(sel)
 }
 function stepOptions (steps, cur) { // steps and cur in the shown unit
   const vals = cur === undefined || steps.includes(cur) ? steps : [...steps, cur].sort((a, b) => a - b)
@@ -331,8 +332,6 @@ depthSel.onchange = () => sendControl(depthSel.value === 'auto' ? { autoRange: t
 rangeSel.onchange = () => sendControl(rangeSel.value === 'auto' ? { autoRange: true } : { range: fromUnit(Number(rangeSel.value)) })
 unitsSel.addEventListener('input', () => { showDepth(); showSettings() })
 noiseSel.onchange = () => sendControl({ noiseRejection: noiseSel.value })
-// once chosen, let go of the drop-down, so it follows what the sonar reports again
-for (const sel of [depthSel, rangeSel, noiseSel]) sel.addEventListener('change', () => sel.blur())
 
 const netEl = document.getElementById('net')
 // The network note is ok exactly when a settings change can reach the sonar (a 169.254 address on its

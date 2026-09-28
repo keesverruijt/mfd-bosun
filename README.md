@@ -26,9 +26,7 @@ It prints its address, for example `http://10.56.0.1:6022/`. Open that on a phon
   password, so after that one tap is enough, from any phone or tablet.
 - A NOS unit needs no password. The first time you control one, it asks on its own screen whether to
   allow "NEON Extender": choose **Always**, and it does not ask again. (*Settings → Wireless → Remote
-  controllers* on the unit lists it, and can forget it.) Its screen shows only while no other app
-  watches it, such as the vendor's Link app: the unit makes a picture that a new viewer can start
-  from only when its stream starts.
+  controllers* on the unit lists it, and can forget it.)
 - **Add to Home Screen** (Safari's share menu, or Chrome's install menu) makes it a full-screen app
   with its own icon.
 
@@ -114,8 +112,11 @@ screen (`rtsp://<unit>:554/screenmirror`, H.264, no authentication; [retina](htt
 as the video, re-packetized, not re-encoded. The page's taps, drags and keys become the unit's
 remote-control protocol on TCP 6633 (touch and key frames, after the unit allowed us). The units
 advertise that port over mDNS as `_navico-mfd-rp._tcp`, and a session there tells model, name, screen
-size and which keys they have. One RTSP stream per unit serves every page; it is started again when a
-page joins, because the unit's encoder makes a key frame only when a stream starts.
+size and which keys they have. One RTSP stream per unit serves every page. The unit's encoder makes an
+IDR frame only when its stream starts, and a browser starts decoding only at one; so for a page that
+joins later, the program turns the next whole picture the unit sends (about once a second, an ordinary
+frame of I slices) into an IDR frame by rewriting its slice headers, and numbers the frames after it on
+from there. The vendor's app, being ffmpeg, simply starts at such a picture.
 
 The protocol notes and the original Node/TypeScript reference are in
 [navico-neon-remote](https://github.com/keesverruijt/navico-neon-remote).

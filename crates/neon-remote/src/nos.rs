@@ -5,9 +5,11 @@
 //! not re-encoded), and takes the page's input channels: tap, drag, pinch and hardkey become the unit's own
 //! remote-control protocol on TCP 6633. The page does not see the difference, apart from the keys it shows.
 //!
-//! One RTSP stream per unit ([`Feeds`]) goes to every page looking at it. The unit's encoder makes a key
-//! frame only when a stream starts, so the stream is started again whenever a page needs one to begin.
+//! One RTSP stream per unit ([`Feeds`]) goes to every page looking at it. The unit's encoder makes an IDR
+//! frame only when a stream starts, so a page that joins later starts from the next whole picture it sends,
+//! made an IDR frame for it ([`crate::h264::Starter`]).
 
+use crate::h264;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use neon_net::discovery::Plotter;
@@ -26,16 +28,17 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 use tokio::net::UdpSocket;
 use tokio::sync::{broadcast, mpsc, Notify};
 
-/// A NOS unit's screen, one H.264 access unit (Annex B, SPS and PPS before every key frame).
+/// A NOS unit's screen, one H.264 access unit (Annex B), and the stream's SPS and PPS (Annex B): the RTSP
+/// client puts those before IDR frames only.
 #[derive(Clone)]
 struct Frame {
     data: Arc<[u8]>,
-    key: bool,
+    params: Arc<[u8]>,
 }
 
 struct Feed {
     frames: broadcast::Sender<Frame>,
-    /// Start the stream again, for a key frame.
+    /// Start the stream again, for an IDR frame (when a page cannot start from what comes).
     restart: Notify,
 }
 
@@ -44,11 +47,10 @@ struct Feed {
 pub struct Feeds(Arc<Mutex<HashMap<String, Arc<Feed>>>>);
 
 impl Feeds {
-    /// The unit's frames, from its next key frame on.
+    /// The unit's frames, from now on.
     fn watch(&self, serial: &str, ip: IpAddr) -> broadcast::Receiver<Frame> {
         let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(f) = g.get(serial) {
-            f.restart.notify_one();
             return f.frames.subscribe();
         }
         let (frames, rx) = broadcast::channel(64);
@@ -132,16 +134,22 @@ async fn stream(
     )
     .await?;
     let mut d = s.play(PlayOptions::default()).await?.demuxed()?;
+    let params_of = |d: &retina::client::Demuxed| -> Arc<[u8]> {
+        match d.streams()[video].parameters() {
+            Some(retina::codec::ParametersRef::Video(v)) => v.extra_data().into(),
+            _ => Arc::from(&[][..]),
+        }
+    };
+    let mut params = params_of(&d);
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
             item = d.next() => match item {
                 Some(Ok(CodecItem::VideoFrame(f))) => {
-                    let key = f.is_random_access_point();
-                    if key {
-                        log::debug!("{url}: key frame ({} bytes)", f.data().len());
+                    if f.has_new_parameters() {
+                        params = params_of(&d);
                     }
-                    let _ = feed.frames.send(Frame { data: f.into_data().into(), key });
+                    let _ = feed.frames.send(Frame { data: f.into_data().into(), params: params.clone() });
                 }
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e.into()),
@@ -458,9 +466,9 @@ pub async fn serve(
     let mut pt: Option<Pt> = None;
     let mut channels: HashMap<str0m::channel::ChannelId, String> = HashMap::new();
     let mut frames: Option<broadcast::Receiver<Frame>> = None;
-    let mut have_key = false;
+    let mut starter = h264::Starter::default();
     let mut last_restart = Instant::now() - Duration::from_secs(10);
-    // since when we wait for a key frame, and whether the page was told why it waits
+    // since when we wait for a frame to start from, and whether the page was told why it waits
     let mut watching_since = Instant::now();
     let mut told_shared = false;
     let t0 = Instant::now();
@@ -489,8 +497,7 @@ pub async fn serve(
                         log::info!("screen session for {serial}: connected");
                         frames = Some(feeds.watch(&serial, p.addr.ip()));
                         watching_since = Instant::now();
-                        last_restart = watching_since;
-                        have_key = false;
+                        starter.resync();
                     }
                     Event::ChannelOpen(id, label) => {
                         channels.insert(id, label);
@@ -537,11 +544,11 @@ pub async fn serve(
                             let _ = in_tx.try_send(m);
                         }
                     }
-                    Event::KeyframeRequest(_)
-                        if last_restart.elapsed() > Duration::from_secs(3) =>
-                    {
-                        last_restart = Instant::now();
-                        feeds.restart(&serial);
+                    // the browser lost track: start it again at the next whole picture
+                    Event::KeyframeRequest(_) if starter.started() => {
+                        log::debug!("screen session for {serial}: key frame asked for");
+                        starter.resync();
+                        watching_since = Instant::now();
                     }
                     _ => {}
                 },
@@ -568,30 +575,31 @@ pub async fn serve(
             }
             f = async { frames.as_mut().unwrap().recv().await }, if frames.is_some() => match f {
                 Ok(f) => {
-                    if f.key && !have_key {
-                        log::debug!("screen session for {serial}: first key frame, mid {mid:?} pt {pt:?}");
+                    let was = starter.started();
+                    let data = starter.frame(&f.data, &f.params);
+                    if !was && starter.started() {
+                        log::debug!("screen session for {serial}: started, {:.1} s after joining", watching_since.elapsed().as_secs_f32());
+                        if told_shared {
+                            told_shared = false;
+                            let _ = to_browser.send(send("status", json!("connected"))).await;
+                        }
                     }
-                    have_key |= f.key;
-                    if have_key && told_shared {
-                        told_shared = false;
-                        let _ = to_browser.send(send("status", json!("connected"))).await;
-                    }
-                    if let (true, Some(mid), Some(pt)) = (have_key, mid, pt) {
+                    if let (Some(data), Some(mid), Some(pt)) = (data, mid, pt) {
                         if let Some(w) = rtc.writer(mid) {
                             let t = MediaTime::new(
                                 (t0.elapsed().as_micros() * 9 / 100) as u64,
                                 Frequency::NINETY_KHZ,
                             );
-                            if let Err(e) = w.write(pt, Instant::now(), t, f.data) {
+                            if let Err(e) = w.write(pt, Instant::now(), t, data) {
                                 log::debug!("screen session for {serial}: {e}");
                             }
                         }
                     }
                 }
-                // too slow: frames were lost, so wait for the next key frame
+                // too slow: frames were lost, so start again at the next whole picture
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    have_key = false;
-                    feeds.restart(&serial);
+                    starter.resync();
+                    watching_since = Instant::now();
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     frames = None;
@@ -654,10 +662,11 @@ pub async fn serve(
                 Some(Ok(_)) => {}
             },
         }
-        // The unit makes a key frame only for a stream nobody else watches (the vendor's app, for one):
-        // until one comes, start ours again now and then, and say why the screen stays black.
+        // A stream we cannot start from (one without whole pictures, or H.264 the starter does not
+        // know): start ours again now and then for an IDR frame, which comes only when nobody else watches
+        // (the vendor's app, for one), and say why the screen stays black.
         if frames.is_some()
-            && !have_key
+            && !starter.started()
             && watching_since.elapsed() > Duration::from_secs(4)
             && last_restart.elapsed() > Duration::from_secs(5)
         {

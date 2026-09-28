@@ -17,6 +17,7 @@
 //!   GET    /signal?plotter=<serial>&key=<n> -> WebSocket to the chartplotter's /ws/receiver/<n>
 
 mod gpx;
+mod h264;
 mod nos;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};

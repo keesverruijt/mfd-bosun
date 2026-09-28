@@ -14,7 +14,7 @@ chartplotters (firmware 2.6.x: Zeus S / SR / SRX, NSS 4, …) and the older NOS 
   waypoints, routes and tracks as a `.usr` file, and its settings as a `.set` file, as the vendor's app
   makes them) can be downloaded.
 - **ForwardScan.** It shows a NOS sonar's ForwardScan on its page, and puts a ForwardScan tile on the
-  chartplotters that opens it (this is [neon-forwardscan](crates/neon-forwardscan), built in).
+  chartplotters that opens it.
 
 It is a single file with no runtime dependencies: no Node, no browser plug-ins, nothing to install.
 
@@ -46,7 +46,11 @@ Options (`--help` shows all):
 | `--plotter IP` | a chartplotter's address, when it is not found by itself; repeatable |
 | `--no-mdns` | do not look for chartplotters with mDNS |
 | `--no-forwardscan` | no ForwardScan |
-| `-i, --interface NAME`, `--no-link-local`, `--read-only`, `--no-advertise`, `--name TEXT` | ForwardScan, as in [neon-forwardscan](crates/neon-forwardscan#on-the-chartplotters) |
+| `-i, --interface NAME` | the interface the sonar is on, when it cannot tell by itself |
+| `--no-link-local` | never add a 169.254 address (changing the sonar's settings needs one) |
+| `--read-only` | the page cannot change the sonar's ForwardScan settings |
+| `--no-advertise` | no ForwardScan tile on the chartplotters |
+| `--name TEXT` | name of the ForwardScan tile (default ForwardScan) |
 | `-v` | more logging |
 
 ### Where the passwords are kept
@@ -58,18 +62,17 @@ screen's menu removes a chartplotter's password.
 
 ### Raspberry Pi as a service
 
-With the binary from the release (`mfd-bosun-aarch64-unknown-linux-musl` for 64-bit Raspberry Pi OS) and
-this repository cloned as `mfd-bosun`, both in the current directory:
+On the Raspberry Pi, with 64-bit Raspberry Pi OS (for 32-bit, use
+`mfd-bosun-armv7-unknown-linux-musleabihf`):
 
 ```sh
-sudo install -m 755 mfd-bosun-aarch64-unknown-linux-musl /usr/local/bin/mfd-bosun
-sudo install -m 644 mfd-bosun/packaging/mfd-bosun.service /etc/systemd/system/
+r=https://github.com/keesverruijt/mfd-bosun/releases/latest/download
+sudo curl -Lo /usr/local/bin/mfd-bosun $r/mfd-bosun-aarch64-unknown-linux-musl
+sudo chmod 755 /usr/local/bin/mfd-bosun
+sudo curl -Lo /etc/systemd/system/mfd-bosun.service $r/mfd-bosun.service
 sudo systemctl enable --now mfd-bosun
 journalctl -u mfd-bosun -f
 ```
-
-It replaces a `neon-forwardscan` service: run one or the other. Both advertise the same ForwardScan
-tile, and when both run, the tile keeps switching between them.
 
 ## Security
 
@@ -141,7 +144,7 @@ The protocol notes and the original Node/TypeScript reference are in
 |---|---|
 | [`mfd-net`](crates/mfd-net) | discovery, trust-all TLS, the chartplotter's REST API and signalling socket, the password store, the NOS remote-control protocol |
 | [`mfd-remote`](crates/mfd-remote) | the signalling proxy, the NOS bridge (RTSP and 6633 to WebRTC), and the remote screen page |
-| [`neon-forwardscan`](crates/neon-forwardscan) | ForwardScan, also a program of its own (absorbed with `git subtree`, history kept) |
+| [`neon-forwardscan`](crates/neon-forwardscan) | ForwardScan: the sonar's picture, its page and the chartplotter tile |
 | [`mfd-bosun`](crates/mfd-bosun) | the `mfd-bosun` program: all of the above on one web server |
 
 The pages are plain HTML/JS/CSS embedded in the binary. There is no build step for them.

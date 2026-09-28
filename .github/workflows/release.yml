@@ -39,11 +39,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }} -p mfd-bosun -p neon-forwardscan
-      - run: |
-          for b in mfd-bosun neon-forwardscan; do
-            cp target/${{ matrix.target }}/release/$b $b-${{ matrix.target }}
-          done
+      - run: cargo build --release --target ${{ matrix.target }} -p mfd-bosun
+      - run: cp target/${{ matrix.target }}/release/mfd-bosun mfd-bosun-${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.target }}
@@ -59,11 +56,9 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: |
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --target $t -p mfd-bosun -p neon-forwardscan
+            cargo build --release --target $t -p mfd-bosun
           done
-          for b in mfd-bosun neon-forwardscan; do
-            lipo -create -output $b-macos target/aarch64-apple-darwin/release/$b target/x86_64-apple-darwin/release/$b
-          done
+          lipo -create -output mfd-bosun-macos target/aarch64-apple-darwin/release/mfd-bosun target/x86_64-apple-darwin/release/mfd-bosun
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -75,10 +70,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --target x86_64-pc-windows-msvc -p mfd-bosun -p neon-forwardscan
-      - run: |
-          copy target\x86_64-pc-windows-msvc\release\mfd-bosun.exe mfd-bosun-windows-x86_64.exe
-          copy target\x86_64-pc-windows-msvc\release\neon-forwardscan.exe neon-forwardscan-windows-x86_64.exe
+      - run: cargo build --release --target x86_64-pc-windows-msvc -p mfd-bosun
+      - run: copy target\x86_64-pc-windows-msvc\release\mfd-bosun.exe mfd-bosun-windows-x86_64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -89,6 +82,7 @@ jobs:
     needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -96,4 +90,27 @@ jobs:
         with:
           files: |
             mfd-bosun-*
-            neon-forwardscan-*
+            packaging/mfd-bosun.service
+
+  publish:
+    # Every build of main, to keversoft.com: the key may only write there, into one web directory
+    # (rrsync on the server), whose URL is known only to whom it is given.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'keesverruijt/mfd-bosun'
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - run: |
+          cp packaging/mfd-bosun.service out/
+          git log -1 --format='%H %cI %s' > out/BUILD
+      - env:
+          KEY: ${{ secrets.PUBLISH_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          (umask 077; echo "$KEY" > ~/.ssh/id_ed25519)
+          echo 'keversoft.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHEPZwbbeOUoOzQOQ2GRD4df0ebYQketV0/ZiIab8Ug' > ~/.ssh/known_hosts
+          rsync -rt --chmod=D755,F644 --delete --delay-updates out/ mfd-bosun@keversoft.com:latest/

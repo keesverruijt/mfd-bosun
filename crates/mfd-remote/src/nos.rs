@@ -1,4 +1,4 @@
-//! The remote screen of a NOS unit (see [`neon_net::nos`]), for the same page as a NEON chartplotter's.
+//! The remote screen of a NOS unit (see [`mfd_net::nos`]), for the same page as a NEON chartplotter's.
 //!
 //! A NOS unit has no WebRTC, so this side plays the chartplotter's part: it makes the WebRTC offer on the
 //! page's signalling socket, sends the unit's RTSP screen as the video (the H.264 as it comes, re-packetized,
@@ -12,8 +12,8 @@
 use crate::h264;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use neon_net::discovery::Plotter;
-use neon_net::nos::{self, Access, Control, Touch};
+use mfd_net::discovery::Plotter;
+use mfd_net::nos::{self, Access, Control, Touch};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;

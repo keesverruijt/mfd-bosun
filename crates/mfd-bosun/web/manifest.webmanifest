@@ -1,7 +1,7 @@
 {
-  "name": "NEON Extender",
-  "short_name": "NEON",
-  "description": "The screens of the Navico NEON chartplotters, and ForwardScan",
+  "name": "MFD Bosun",
+  "short_name": "Bosun",
+  "description": "The screens and waypoints of the Navico chartplotters, and ForwardScan",
   "start_url": "/",
   "scope": "/",
   "display": "fullscreen",

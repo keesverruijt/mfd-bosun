@@ -6,7 +6,7 @@
 // Signalling envelope, both ways:  { command, clientKey?, dataString? }, dataString itself a JSON string:
 //   SDP: { type: "offer"|"answer", sdp }     ICE: { candidate, sdpMLineIndex, sdpMid, usernameFragment }
 
-// close codes from our server (see neon-remote's lib.rs)
+// close codes from our server (see mfd-remote's lib.rs)
 export const CLOSE_PASSWORD = 4001
 export const CLOSE_UNKNOWN = 4004
 

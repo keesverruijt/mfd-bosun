@@ -39,9 +39,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }} -p neon-extender -p neon-forwardscan
+      - run: cargo build --release --target ${{ matrix.target }} -p mfd-bosun -p neon-forwardscan
       - run: |
-          for b in navico-neon-extender neon-forwardscan; do
+          for b in mfd-bosun neon-forwardscan; do
             cp target/${{ matrix.target }}/release/$b $b-${{ matrix.target }}
           done
       - uses: actions/upload-artifact@v4
@@ -59,9 +59,9 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: |
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --target $t -p neon-extender -p neon-forwardscan
+            cargo build --release --target $t -p mfd-bosun -p neon-forwardscan
           done
-          for b in navico-neon-extender neon-forwardscan; do
+          for b in mfd-bosun neon-forwardscan; do
             lipo -create -output $b-macos target/aarch64-apple-darwin/release/$b target/x86_64-apple-darwin/release/$b
           done
       - uses: actions/upload-artifact@v4
@@ -75,9 +75,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --target x86_64-pc-windows-msvc -p neon-extender -p neon-forwardscan
+      - run: cargo build --release --target x86_64-pc-windows-msvc -p mfd-bosun -p neon-forwardscan
       - run: |
-          copy target\x86_64-pc-windows-msvc\release\navico-neon-extender.exe navico-neon-extender-windows-x86_64.exe
+          copy target\x86_64-pc-windows-msvc\release\mfd-bosun.exe mfd-bosun-windows-x86_64.exe
           copy target\x86_64-pc-windows-msvc\release\neon-forwardscan.exe neon-forwardscan-windows-x86_64.exe
       - uses: actions/upload-artifact@v4
         with:
@@ -95,5 +95,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            navico-neon-extender-*
+            mfd-bosun-*
             neon-forwardscan-*

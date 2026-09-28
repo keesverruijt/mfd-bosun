@@ -1,7 +1,8 @@
-# navico-neon-extender
+# mfd-bosun
 
-One program for a boat's network (a Raspberry Pi, or any laptop) that extends the Navico NEON
-chartplotters (B&G Zeus / Simrad NSS / Lowrance, firmware 2.6.x):
+The bosun looks after the boat's gear; this one looks after its Navico chartplotters (MFDs: B&G,
+Simrad, Lowrance). One program for a boat's network (a Raspberry Pi, or any laptop), for the NEON
+chartplotters (firmware 2.6.x: Zeus S / SR / SRX, NSS 4, …) and the older NOS ones before them:
 
 - **Remote screen.** It finds the chartplotters by itself. Pick one on its page to see its screen on a
   phone, tablet or laptop, and tap, drag and send keys to it. It uses the chartplotter's own screen
@@ -20,7 +21,7 @@ It is a single file with no runtime dependencies: no Node, no browser plug-ins, 
 ## Running it
 
 ```sh
-./navico-neon-extender
+./mfd-bosun
 ```
 
 It prints its address, for example `http://10.56.0.1:6022/`. Open that on a phone or tablet:
@@ -29,7 +30,7 @@ It prints its address, for example `http://10.56.0.1:6022/`. Open that on a phon
   it asks for **that chartplotter's WiFi password**, which can differ from unit to unit. It keeps the
   password, so after that one tap is enough, from any phone or tablet.
 - A NOS unit needs no password. The first time you control one, it asks on its own screen whether to
-  allow "NEON Extender": choose **Always**, and it does not ask again. (*Settings → Wireless → Remote
+  allow "MFD Bosun": choose **Always**, and it does not ask again. (*Settings → Wireless → Remote
   controllers* on the unit lists it, and can forget it.)
 - **Add to Home Screen** (Safari's share menu, or Chrome's install menu) makes it a full-screen app
   with its own icon.
@@ -40,8 +41,8 @@ Options (`--help` shows all):
 |---|---|
 | `-p, --port N` | web page port (default 6022) |
 | `--data-dir DIR` | where the passwords are kept (see below) |
-| `--listen IP,…` | addresses to serve the pages on; also `NEON_EXTENDER_LISTEN` (default `::`: all, IPv6 and IPv4; `0.0.0.0`: IPv4 only) |
-| `--password TEXT` | a password for the remote screens; also `NEON_EXTENDER_PASSWORD` (default: none) |
+| `--listen IP,…` | addresses to serve the pages on; also `MFD_BOSUN_LISTEN` (default `::`: all, IPv6 and IPv4; `0.0.0.0`: IPv4 only) |
+| `--password TEXT` | a password for the remote screens; also `MFD_BOSUN_PASSWORD` (default: none) |
 | `--plotter IP` | a chartplotter's address, when it is not found by itself; repeatable |
 | `--no-mdns` | do not look for chartplotters with mDNS |
 | `--no-forwardscan` | no ForwardScan |
@@ -51,17 +52,17 @@ Options (`--help` shows all):
 ### Where the passwords are kept
 
 `credentials.json`, readable by its owner only, in `$STATE_DIRECTORY` (set by systemd), or else in
-`~/.config/navico-neon-extender/` (Linux), `~/Library/Application Support/navico-neon-extender/`
-(macOS) or `%APPDATA%\navico-neon-extender\` (Windows). The **Forget password** item on the remote
+`~/.config/mfd-bosun/` (Linux), `~/Library/Application Support/mfd-bosun/`
+(macOS) or `%APPDATA%\mfd-bosun\` (Windows). The **Forget password** item on the remote
 screen's menu removes a chartplotter's password.
 
 ### Raspberry Pi as a service
 
 ```sh
-sudo install -m 755 navico-neon-extender /usr/local/bin/
-sudo install -m 644 packaging/navico-neon-extender.service /etc/systemd/system/
-sudo systemctl enable --now navico-neon-extender
-journalctl -u navico-neon-extender -f
+sudo install -m 755 mfd-bosun /usr/local/bin/
+sudo install -m 644 packaging/mfd-bosun.service /etc/systemd/system/
+sudo systemctl enable --now mfd-bosun
+journalctl -u mfd-bosun -f
 ```
 
 It replaces a `neon-forwardscan` service: run one or the other. Both advertise the same ForwardScan
@@ -72,8 +73,8 @@ tile, and when both run, the tile keeps switching between them.
 The only thing that protects a chartplotter's screen is its **WiFi password**. Anyone on the boat's
 network who knows it can view and control the chartplotter, and this program keeps those passwords.
 So anyone who can open this program's page can view and control the chartplotters whose passwords it
-holds, unless you give the program a password of its own: `--password`, or `NEON_EXTENDER_PASSWORD` in
-the environment (with systemd: in `/etc/default/navico-neon-extender`, see the unit). Then the remote
+holds, unless you give the program a password of its own: `--password`, or `MFD_BOSUN_PASSWORD` in
+the environment (with systemd: in `/etc/default/mfd-bosun`, see the unit). Then the remote
 screens need a login, which a browser can remember (a cookie with a hash of the password, for 400 days;
 a new password logs everyone out). ForwardScan stays open: the chartplotters show it themselves. Without
 TLS the password crosses the network in the clear, so it keeps out the curious, not someone listening in.
@@ -85,7 +86,7 @@ Run it only on a network you trust, and only with chartplotters you own or may u
 ## How it works
 
 ```
- browser ──http/ws──► navico-neon-extender ──TLS, Bearer──► chartplotter :8444 /ws/receiver
+ browser ──http/ws──► mfd-bosun ──TLS, Bearer──► chartplotter :8444 /ws/receiver
     │                                                              ▲
     └──────────── WebRTC video + input channels (peer to peer) ────┘
 ```
@@ -107,7 +108,7 @@ passes the signalling messages through unchanged. The video never passes through
 ### NOS units
 
 ```
- browser ◄──WebRTC video + input channels──► navico-neon-extender ◄──RTSP :554──── NOS unit
+ browser ◄──WebRTC video + input channels──► mfd-bosun ◄──RTSP :554──── NOS unit
                                                     └──────────TCP :6633 input──────►
 ```
 
@@ -135,17 +136,17 @@ The protocol notes and the original Node/TypeScript reference are in
 
 | Crate | |
 |---|---|
-| [`neon-net`](crates/neon-net) | discovery, trust-all TLS, the chartplotter's REST API and signalling socket, the password store, the NOS remote-control protocol |
-| [`neon-remote`](crates/neon-remote) | the signalling proxy, the NOS bridge (RTSP and 6633 to WebRTC), and the remote screen page |
+| [`mfd-net`](crates/mfd-net) | discovery, trust-all TLS, the chartplotter's REST API and signalling socket, the password store, the NOS remote-control protocol |
+| [`mfd-remote`](crates/mfd-remote) | the signalling proxy, the NOS bridge (RTSP and 6633 to WebRTC), and the remote screen page |
 | [`neon-forwardscan`](crates/neon-forwardscan) | ForwardScan, also a program of its own (absorbed with `git subtree`, history kept) |
-| [`neon-extender`](crates/neon-extender) | the `navico-neon-extender` program: all of the above on one web server |
+| [`mfd-bosun`](crates/mfd-bosun) | the `mfd-bosun` program: all of the above on one web server |
 
 The pages are plain HTML/JS/CSS embedded in the binary. There is no build step for them.
 
 ## Building
 
 ```sh
-cargo build --release          # target/release/navico-neon-extender
+cargo build --release          # target/release/mfd-bosun
 ```
 
 Static Linux binaries, from any host with Rust and clang. No C cross toolchain is needed:
@@ -154,7 +155,7 @@ Static Linux binaries, from any host with Rust and clang. No C cross toolchain i
 
 ```sh
 rustup target add aarch64-unknown-linux-musl   # 64-bit Raspberry Pi OS; armv7-unknown-linux-musleabihf for 32-bit
-cargo build --release --target aarch64-unknown-linux-musl -p neon-extender
+cargo build --release --target aarch64-unknown-linux-musl -p mfd-bosun
 ```
 
 ## License

@@ -1,4 +1,4 @@
-# navico-neon-extender. Machine-specific targets (deploying to a particular Pi) go in Makefile.local,
+# mfd-bosun. Machine-specific targets (deploying to a particular Pi) go in Makefile.local,
 # which is gitignored and loaded below when present.
 
 .PHONY: all build release test clippy fmt check

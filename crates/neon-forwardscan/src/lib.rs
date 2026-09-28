@@ -1,7 +1,7 @@
 //! neon-forwardscan: shows a Navico NOS sonar device's ForwardScan in a web page, and puts that page on the
 //! home screen of the Navico / B&G / Simrad / Lowrance chartplotters on the same network.
 //!
-//! As a library it runs inside another program (navico-neon-extender): [`ForwardScan::start`] starts the
+//! As a library it runs inside another program (mfd-bosun): [`ForwardScan::start`] starts the
 //! receivers, the advertisement and the network upkeep; [`ForwardScan::router`] is the page, to serve or nest.
 
 pub mod net;

@@ -1,7 +1,7 @@
 [package]
-name = "neon-remote"
+name = "mfd-remote"
 version = "0.1.0"
-description = "Remote screen of Navico NEON chartplotters in a browser: signalling proxy and page"
+description = "Remote screen of Navico chartplotters in a browser: the NEON signalling proxy, the NOS bridge, and the page"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -11,7 +11,7 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "json
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 if-addrs = "0.15.0"
 log = "0.4.34"
-neon-net = { version = "0.1.0", path = "../neon-net" }
+mfd-net = { version = "0.1.0", path = "../mfd-net" }
 retina = "0.4"
 ring = { version = "0.17.14", default-features = false }
 rust-embed = "8.12.0"

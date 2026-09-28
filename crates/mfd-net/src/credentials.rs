@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn keeps_passwords_across_opens() {
-        let dir = std::env::temp_dir().join(format!("neon-net-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mfd-net-test-{}", std::process::id()));
         let path = dir.join("credentials.json");
         let c = Credentials::open(path.clone()).unwrap();
         assert_eq!(c.password("123"), None);

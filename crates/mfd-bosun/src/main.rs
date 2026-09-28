@@ -1,9 +1,10 @@
-//! navico-neon-extender: one program on the boat's network for the Navico NEON chartplotters. It finds them,
-//! shows their screens in a browser (to view and control them from a phone, tablet or laptop), and shows a
-//! NOS sonar's ForwardScan, also on the chartplotters themselves.
+//! mfd-bosun: one program on the boat's network for the Navico chartplotters, NEON and the older NOS. It
+//! finds them, shows their screens in a browser (to view and control them from a phone, tablet or laptop),
+//! gives their waypoints and routes, and shows a NOS sonar's ForwardScan, also on the chartplotters
+//! themselves.
 //!
 //!   /              the chartplotters, and ForwardScan
-//!   /remote/       a chartplotter's screen (neon-remote)
+//!   /remote/       a chartplotter's screen (mfd-remote)
 //!   /forwardscan/  ForwardScan (neon-forwardscan)
 //!   /api/status    what the first page shows
 
@@ -17,10 +18,10 @@ use axum::routing::get;
 use axum::ServiceExt;
 use axum::{Json, Router};
 use clap::Parser;
+use mfd_net::credentials::{self, Credentials};
+use mfd_net::discovery::Discovery;
+use mfd_remote::Remote;
 use neon_forwardscan::ForwardScan;
-use neon_net::credentials::{self, Credentials};
-use neon_net::discovery::Discovery;
-use neon_remote::Remote;
 use rust_embed::RustEmbed;
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -29,7 +30,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower::Layer;
 
-const APP: &str = "navico-neon-extender";
+const APP: &str = "mfd-bosun";
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -42,7 +43,7 @@ struct Args {
     #[arg(
         long,
         value_name = "IP",
-        env = "NEON_EXTENDER_LISTEN",
+        env = "MFD_BOSUN_LISTEN",
         value_delimiter = ',',
         default_value = "::"
     )]
@@ -51,7 +52,7 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
     /// Password for these pages' remote screens (default: none, open to everyone on the network)
-    #[arg(long, env = "NEON_EXTENDER_PASSWORD", hide_env_values = true)]
+    #[arg(long, env = "MFD_BOSUN_PASSWORD", hide_env_values = true)]
     password: Option<String>,
     /// A chartplotter's address, for when it is not found by itself (mDNS); may be given more than once
     #[arg(long = "plotter", value_name = "IP")]
@@ -97,7 +98,7 @@ async fn main() {
     let args = Args::parse();
     let level = ["info", "debug", "trace"][args.verbose.min(2) as usize];
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(format!(
-        "navico_neon_extender={level},neon_net={level},neon_remote={level},neon_forwardscan={level}"
+        "mfd_bosun={level},mfd_net={level},mfd_remote={level},neon_forwardscan={level}"
     )))
     .init();
 
@@ -130,14 +131,14 @@ async fn main() {
 
     let discovery = Discovery::start(!args.no_mdns);
     for ip in &args.plotters {
-        discovery.add_address(SocketAddr::new(*ip, neon_net::api::PORT));
-        discovery.add_address(SocketAddr::new(*ip, neon_net::nos::PORT));
+        discovery.add_address(SocketAddr::new(*ip, mfd_net::api::PORT));
+        discovery.add_address(SocketAddr::new(*ip, mfd_net::nos::PORT));
     }
     let remote = Remote::new(
         discovery.clone(),
         credentials,
-        "extender@navico-neon-extender.local",
-        "NEON Extender",
+        "bosun@mfd-bosun.local",
+        "MFD Bosun",
     );
 
     let fs = if args.no_forwardscan {
@@ -264,8 +265,8 @@ async fn follow_announcements(fs: neon_forwardscan::state::State, discovery: Dis
         for d in devices {
             if let Some(ip) = d.ip {
                 discovery.set_name(ip, &d.name);
-                discovery.add_address(SocketAddr::new(IpAddr::V4(ip), neon_net::api::PORT));
-                discovery.add_address(SocketAddr::new(IpAddr::V4(ip), neon_net::nos::PORT));
+                discovery.add_address(SocketAddr::new(IpAddr::V4(ip), mfd_net::api::PORT));
+                discovery.add_address(SocketAddr::new(IpAddr::V4(ip), mfd_net::nos::PORT));
             }
         }
     }
@@ -303,7 +304,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
         .iter()
         .map(|p| {
             let mut v =
-                serde_json::to_value(neon_net::discovery::PlotterView::from(p)).unwrap_or_default();
+                serde_json::to_value(mfd_net::discovery::PlotterView::from(p)).unwrap_or_default();
             v["hasPassword"] = app.remote.has_password(&p.serial).into();
             v
         })
@@ -322,7 +323,7 @@ async fn asset(uri: Uri) -> Response {
         "" => "index.html",
         p => p,
     };
-    neon_remote::serve_embedded::<Assets>(path)
+    mfd_remote::serve_embedded::<Assets>(path)
 }
 
 async fn shutdown() {

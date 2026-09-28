@@ -1,4 +1,4 @@
-//! The optional password for this program's own pages (`--password` / `NEON_EXTENDER_PASSWORD`).
+//! The optional password for this program's own pages (`--password` / `MFD_BOSUN_PASSWORD`).
 //!
 //! Without one, everything is open. With one, the chartplotters' remote screens (and the list of them)
 //! need a login; ForwardScan stays open, since the chartplotters show it themselves and cannot log in.
@@ -19,7 +19,7 @@ use axum::{Json, Router};
 use serde_json::json;
 use std::sync::Arc;
 
-const COOKIE: &str = "neon_extender";
+const COOKIE: &str = "mfd_bosun";
 const REMEMBER: u64 = 400 * 24 * 3600; // the most browsers keep a cookie
 /// Paths that need a login when there is a password.
 const PROTECTED: [&str; 2] = ["/api/status", "/remote/"];
@@ -62,7 +62,7 @@ impl Auth {
 fn token(password: &str) -> String {
     let d = ring::digest::digest(
         &ring::digest::SHA256,
-        format!("navico-neon-extender\0{password}").as_bytes(),
+        format!("mfd-bosun\0{password}").as_bytes(),
     );
     d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }

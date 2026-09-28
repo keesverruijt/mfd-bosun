@@ -131,7 +131,7 @@ async function refresh() {
   $('sonars').innerHTML = sources.length
     ? sources.map(sonarCard).join('')
     : '<li class="empty">No ForwardScan seen yet. Start ForwardScan on the sonar.</li>'
-  $('version').textContent = `navico-neon-extender ${st.version}`
+  $('version').textContent = `mfd-bosun ${st.version}`
 }
 
 // --- the password of these pages, when they have one ---

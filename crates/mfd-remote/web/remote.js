@@ -57,7 +57,7 @@ async function plotter() {
   return list.find((p) => p.serial === serial)
 }
 
-// These pages may have a password (navico-neon-extender --password): its login is on the first page,
+// These pages may have a password (mfd-bosun --password): its login is on the first page,
 // which comes back here after it.
 function toLogin() {
   location.href = `../?next=${encodeURIComponent(location.pathname + location.search)}`

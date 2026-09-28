@@ -1423,6 +1423,66 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mfd-bosun"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "env_logger",
+ "log",
+ "mfd-net",
+ "mfd-remote",
+ "neon-forwardscan",
+ "ring",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "socket2 0.6.5",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "mfd-net"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "mdns-sd",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
+name = "mfd-remote"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "if-addrs",
+ "log",
+ "mfd-net",
+ "retina",
+ "ring",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "str0m",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "url",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1472,26 +1532,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96a1fe2275b68991faded2c80aa4a33dba398b77d276038b8f50701a22e55918"
 
 [[package]]
-name = "neon-extender"
-version = "0.1.0"
-dependencies = [
- "axum",
- "clap",
- "env_logger",
- "log",
- "neon-forwardscan",
- "neon-net",
- "neon-remote",
- "ring",
- "rust-embed",
- "serde",
- "serde_json",
- "socket2 0.6.5",
- "tokio",
- "tower",
-]
-
-[[package]]
 name = "neon-forwardscan"
 version = "1.0.0"
 dependencies = [
@@ -1507,46 +1547,6 @@ dependencies = [
  "socket2 0.6.5",
  "tokio",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "neon-net"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "bytes",
- "http-body-util",
- "hyper",
- "hyper-util",
- "log",
- "mdns-sd",
- "ring",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite 0.30.0",
-]
-
-[[package]]
-name = "neon-remote"
-version = "0.1.0"
-dependencies = [
- "axum",
- "futures-util",
- "if-addrs",
- "log",
- "neon-net",
- "retina",
- "ring",
- "rust-embed",
- "serde",
- "serde_json",
- "str0m",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "url",
 ]
 
 [[package]]

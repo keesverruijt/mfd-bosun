@@ -1,7 +1,7 @@
 [package]
-name = "neon-net"
+name = "mfd-net"
 version = "0.1.0"
-description = "Finding and talking to Navico NEON chartplotters: mDNS, /api/v1/info, trust-all TLS, pairing, credential store"
+description = "Finding and talking to Navico chartplotters: mDNS, the NEON REST API with trust-all TLS and pairing, the NOS remote-control protocol, credential store"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true

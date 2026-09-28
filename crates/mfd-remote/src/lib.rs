@@ -29,10 +29,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
-use neon_net::api::{self, PairError};
-use neon_net::credentials::Credentials;
-use neon_net::discovery::{Discovery, Plotter, PlotterView};
-use neon_net::ws::{self as upstream, ConnectError};
+use mfd_net::api::{self, PairError};
+use mfd_net::credentials::Credentials;
+use mfd_net::discovery::{Discovery, Plotter, PlotterView};
+use mfd_net::ws::{self as upstream, ConnectError};
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -426,7 +426,7 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
     {
         // a NOS unit: its own backup, read
         Some(p) => {
-            let d = match neon_net::nos::fetch(p.addr.ip(), neon_net::nos::WAYPOINTS).await {
+            let d = match mfd_net::nos::fetch(p.addr.ip(), mfd_net::nos::WAYPOINTS).await {
                 Ok(d) => d,
                 Err(e) => return fail(StatusCode::BAD_GATEWAY, e.to_string()),
             };
@@ -467,12 +467,7 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
                 format!("attachment; filename=\"{}.gpx\"", file_name(&name)),
             ),
         ],
-        gpx::gpx(
-            &format!("navico-neon-extender ({name})"),
-            &waypoints,
-            &routes,
-            &tracks,
-        ),
+        gpx::gpx(&format!("mfd-bosun ({name})"), &waypoints, &routes, &tracks),
     )
         .into_response()
 }
@@ -483,14 +478,14 @@ async fn nos_backup(
     Path((serial, file)): Path<(String, String)>,
 ) -> Response {
     let path = match file.as_str() {
-        "WaypointsRoutesTracks.usr" => neon_net::nos::WAYPOINTS,
-        "Settings.set" => neon_net::nos::SETTINGS,
+        "WaypointsRoutesTracks.usr" => mfd_net::nos::WAYPOINTS,
+        "Settings.set" => mfd_net::nos::SETTINGS,
         _ => return fail(StatusCode::NOT_FOUND, "no such backup"),
     };
     let Some(p) = r.discovery.get(&serial).filter(|p| p.nos.is_some()) else {
         return fail(StatusCode::NOT_FOUND, format!("no NOS unit {serial}"));
     };
-    match neon_net::nos::fetch(p.addr.ip(), path).await {
+    match mfd_net::nos::fetch(p.addr.ip(), path).await {
         Ok(d) => {
             let name = p.name.clone().unwrap_or_else(|| p.model.clone());
             log::info!("{file} of {} ({serial}): {} bytes", p.model, d.len());

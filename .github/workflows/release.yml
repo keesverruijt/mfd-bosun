@@ -40,11 +40,17 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }} -p mfd-bosun
-      - run: cp target/${{ matrix.target }}/release/mfd-bosun mfd-bosun-${{ matrix.target }}
+      # the binary, its systemd unit, /etc/default/mfd-bosun and install.sh, in mfd-bosun-<target>/
+      - run: |
+          d=mfd-bosun-${{ matrix.target }}
+          mkdir $d
+          install -m 755 target/${{ matrix.target }}/release/mfd-bosun packaging/install.sh $d/
+          install -m 644 packaging/mfd-bosun.service packaging/mfd-bosun.default $d/
+          tar czf $d.tar.gz $d
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.target }}
-          path: '*-${{ matrix.target }}'
+          path: mfd-bosun-${{ matrix.target }}.tar.gz
 
   macos:
     needs: test
@@ -82,7 +88,6 @@ jobs:
     needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -90,7 +95,6 @@ jobs:
         with:
           files: |
             mfd-bosun-*
-            packaging/mfd-bosun.service
 
   publish:
     # Every build of main, to keversoft.com: the key may only write there, into one web directory
@@ -105,7 +109,6 @@ jobs:
           path: out
           merge-multiple: true
       - run: |
-          cp packaging/mfd-bosun.service out/
           git log -1 --format='%H %cI %s' > out/BUILD
       - env:
           KEY: ${{ secrets.PUBLISH_SSH_KEY }}

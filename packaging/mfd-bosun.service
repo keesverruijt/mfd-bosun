@@ -1,8 +1,5 @@
-# systemd unit for mfd-bosun (Raspberry Pi or any Linux), from the directory holding the release
-# binary and a clone of the repository (see README.md):
-#   sudo install -m 755 mfd-bosun-aarch64-unknown-linux-musl /usr/local/bin/mfd-bosun
-#   sudo install -m 644 mfd-bosun/packaging/mfd-bosun.service /etc/systemd/system/
-#   sudo systemctl enable --now mfd-bosun
+# systemd unit for mfd-bosun (Raspberry Pi or any Linux). install.sh in the Linux release archive
+# installs it (see README.md); then:
 #   journalctl -u mfd-bosun -f
 [Unit]
 Description=MFD Bosun: Navico chartplotter screens in a browser, their waypoints, and ForwardScan
@@ -10,9 +7,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/mfd-bosun
-# options as environment variables, e.g. MFD_BOSUN_PASSWORD (a password for the remote screens)
+# options in /etc/default/mfd-bosun: MFD_BOSUN_PASSWORD, MFD_BOSUN_LISTEN, and MFD_BOSUN_ARGS for the rest
 EnvironmentFile=-/etc/default/mfd-bosun
+ExecStart=/usr/local/bin/mfd-bosun $MFD_BOSUN_ARGS
 Restart=always
 DynamicUser=yes
 # the chartplotters' passwords: /var/lib/mfd-bosun/credentials.json

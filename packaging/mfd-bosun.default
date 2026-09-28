@@ -1,0 +1,12 @@
+# Settings for the mfd-bosun service (/etc/default/mfd-bosun). After a change:
+#   sudo systemctl restart mfd-bosun
+
+# A password for the remote screens (default: none). Anyone who can open the page can otherwise
+# control the chartplotters whose WiFi passwords it keeps.
+#MFD_BOSUN_PASSWORD=
+
+# Addresses to serve the pages on (default ::, all, IPv6 and IPv4; 0.0.0.0: IPv4 only)
+#MFD_BOSUN_LISTEN=::
+
+# Any other options (mfd-bosun --help), e.g. a port and a chartplotter that is not found by itself
+#MFD_BOSUN_ARGS=--port 8080 --plotter 10.0.0.5

@@ -63,16 +63,18 @@ screen's menu removes a chartplotter's password.
 ### Raspberry Pi as a service
 
 On the Raspberry Pi, with 64-bit Raspberry Pi OS (for 32-bit, use
-`mfd-bosun-armv7-unknown-linux-musleabihf`):
+`mfd-bosun-armv7-unknown-linux-musleabihf`; `x86_64-unknown-linux-musl` for a PC):
 
 ```sh
-r=https://github.com/keesverruijt/mfd-bosun/releases/latest/download
-sudo curl -Lo /usr/local/bin/mfd-bosun $r/mfd-bosun-aarch64-unknown-linux-musl
-sudo chmod 755 /usr/local/bin/mfd-bosun
-sudo curl -Lo /etc/systemd/system/mfd-bosun.service $r/mfd-bosun.service
-sudo systemctl enable --now mfd-bosun
+curl -L https://github.com/keesverruijt/mfd-bosun/releases/latest/download/mfd-bosun-aarch64-unknown-linux-musl.tar.gz | tar xz
+sudo mfd-bosun-aarch64-unknown-linux-musl/install.sh
 journalctl -u mfd-bosun -f
 ```
+
+`install.sh` puts the program in `/usr/local/bin`, installs the systemd unit, enables and (re)starts
+it. Its settings go in `/etc/default/mfd-bosun` (a password, the addresses, and any other options in
+`MFD_BOSUN_ARGS`); a first install writes a commented one, and an update keeps yours. To update, do
+the same again.
 
 ## Security
 
@@ -80,7 +82,7 @@ The only thing that protects a chartplotter's screen is its **WiFi password**. A
 network who knows it can view and control the chartplotter, and this program keeps those passwords.
 So anyone who can open this program's page can view and control the chartplotters whose passwords it
 holds, unless you give the program a password of its own: `--password`, or `MFD_BOSUN_PASSWORD` in
-the environment (with systemd: in `/etc/default/mfd-bosun`, see the unit). Then the remote
+the environment (with systemd: in `/etc/default/mfd-bosun`). Then the remote
 screens need a login, which a browser can remember (a cookie with a hash of the password, for 400 days;
 a new password logs everyone out). ForwardScan stays open: the chartplotters show it themselves. Without
 TLS the password crosses the network in the clear, so it keeps out the curious, not someone listening in.

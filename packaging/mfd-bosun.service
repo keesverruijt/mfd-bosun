@@ -1,6 +1,7 @@
-# systemd unit for mfd-bosun (Raspberry Pi or any Linux):
-#   sudo install -m 755 mfd-bosun /usr/local/bin/
-#   sudo install -m 644 mfd-bosun.service /etc/systemd/system/
+# systemd unit for mfd-bosun (Raspberry Pi or any Linux), from the directory holding the release
+# binary and a clone of the repository (see README.md):
+#   sudo install -m 755 mfd-bosun-aarch64-unknown-linux-musl /usr/local/bin/mfd-bosun
+#   sudo install -m 644 mfd-bosun/packaging/mfd-bosun.service /etc/systemd/system/
 #   sudo systemctl enable --now mfd-bosun
 #   journalctl -u mfd-bosun -f
 [Unit]

@@ -58,9 +58,12 @@ screen's menu removes a chartplotter's password.
 
 ### Raspberry Pi as a service
 
+With the binary from the release (`mfd-bosun-aarch64-unknown-linux-musl` for 64-bit Raspberry Pi OS) and
+this repository cloned as `mfd-bosun`, both in the current directory:
+
 ```sh
-sudo install -m 755 mfd-bosun /usr/local/bin/
-sudo install -m 644 packaging/mfd-bosun.service /etc/systemd/system/
+sudo install -m 755 mfd-bosun-aarch64-unknown-linux-musl /usr/local/bin/mfd-bosun
+sudo install -m 644 mfd-bosun/packaging/mfd-bosun.service /etc/systemd/system/
 sudo systemctl enable --now mfd-bosun
 journalctl -u mfd-bosun -f
 ```

@@ -66,15 +66,15 @@ On the Raspberry Pi, with 64-bit Raspberry Pi OS (for 32-bit, use
 `mfd-bosun-armv7-unknown-linux-musleabihf`; `x86_64-unknown-linux-musl` for a PC):
 
 ```sh
-curl -L https://github.com/keesverruijt/mfd-bosun/releases/latest/download/mfd-bosun-aarch64-unknown-linux-musl.tar.gz | tar xz
+curl -L https://keversoft.com/downloads/mfd-bosun/latest/mfd-bosun-aarch64-unknown-linux-musl.tar.gz | tar xz
 sudo mfd-bosun-aarch64-unknown-linux-musl/install.sh
 journalctl -u mfd-bosun -f
 ```
 
-`install.sh` puts the program in `/usr/local/bin`, installs the systemd unit, enables and (re)starts
-it. Its settings go in `/etc/default/mfd-bosun` (a password, the addresses, and any other options in
-`MFD_BOSUN_ARGS`); a first install writes a commented one, and an update keeps yours. To update, do
-the same again.
+That is the latest build of `main` (`latest/BUILD` says which commit). `install.sh` puts the program
+in `/usr/local/bin`, installs the systemd unit, enables and (re)starts it. Its settings go in
+`/etc/default/mfd-bosun` (a password, the addresses, and any other options in `MFD_BOSUN_ARGS`); a
+first install writes a commented one, and an update keeps yours. To update, do the same again.
 
 ## Security
 

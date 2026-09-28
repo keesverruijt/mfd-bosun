@@ -19,8 +19,9 @@ pub struct Info {
     pub serial_number: String,
     pub os_version: String,
     pub language: String,
-    /// The chartplotter's own snap_id: pairing must use it (see [`pair`]).
-    pub snap_id: String,
+    /// The chartplotter's own snap_id: pairing must use it (see [`pair`]). `null` on a unit that has none
+    /// (a Zeus S, 2.5.208): then that is what pairing sends.
+    pub snap_id: Option<String>,
 }
 
 pub async fn info(addr: SocketAddr) -> std::io::Result<Info> {
@@ -167,5 +168,20 @@ pub async fn sync_read(
             "{path} on {addr}: HTTP {s}: {}",
             r.text()
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn info_without_snap_id() {
+        let i: Info = serde_json::from_str(
+            r#"{"model":"Zeus S","brand":"bandg","serial_number":"1234567890abcdef","os_version":"2.5.208","language":"en","public_identity":"MIIC","snap_id":null}"#,
+        )
+        .unwrap();
+        assert_eq!(i.serial_number, "1234567890abcdef");
+        assert_eq!(i.snap_id, None);
     }
 }

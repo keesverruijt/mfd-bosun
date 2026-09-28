@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>Remote screen</title>
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../favicon.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="remote.css">
+</head>
+<body>
+<div id="stage">
+  <video id="video" autoplay playsinline muted disablepictureinpicture disableremoteplayback></video>
+  <div id="touch"></div>
+  <div id="center" hidden></div>
+  <button id="start" type="button" hidden>Tap to start the video</button>
+</div>
+
+<header id="bar">
+  <a id="back" href="../" title="Chartplotters" aria-label="Chartplotters">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  <div id="title"><b id="name">Remote screen</b><span id="status">…</span></div>
+  <button id="more" type="button" title="More" aria-label="More" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
+  </button>
+</header>
+
+<aside id="panel" hidden>
+  <section>
+    <h2>Keys</h2>
+    <!-- The Zeus SR's own keys (keypad, knob turned and pressed), then zoom and arrows. -->
+    <div id="keypad">
+      <button type="button" data-key="KEYCODE_HOME">Home</button>
+      <button type="button" data-key="KEYCODE_MENU">Menu</button>
+      <button type="button" data-key="KEYCODE_BACK">Back</button>
+      <button type="button" data-key="KEYCODE_SHIFT + KEYCODE_TAB" aria-label="Knob anticlockwise">⟲</button>
+      <button type="button" data-key="KEYCODE_ENTER" aria-label="Knob press">Press</button>
+      <button type="button" data-key="KEYCODE_TAB" aria-label="Knob clockwise">⟳</button>
+      <button type="button" data-key="KEYCODE_NAVIGATE_IN">Waypoint</button>
+      <button type="button" data-key="KEYCODE_F1">User 1</button>
+      <button type="button" data-key="KEYCODE_F2">User 2</button>
+      <button type="button" data-key="KEYCODE_ZOOM_OUT" aria-label="Zoom out">−</button>
+      <button type="button" data-key="KEYCODE_DPAD_UP" aria-label="Up">▲</button>
+      <button type="button" data-key="KEYCODE_ZOOM_IN" aria-label="Zoom in">+</button>
+      <button type="button" data-key="KEYCODE_DPAD_LEFT" aria-label="Left">◀</button>
+      <button type="button" data-key="KEYCODE_DPAD_DOWN" aria-label="Down">▼</button>
+      <button type="button" data-key="KEYCODE_DPAD_RIGHT" aria-label="Right">▶</button>
+    </div>
+    <p>With a keyboard, the keys work on the screen itself: arrows, Enter, Esc (back), Tab, Backspace, and typing
+      into the focused field. Enter is the knob press: on the on-screen keyboard it presses the highlighted key.</p>
+  </section>
+  <section>
+    <h2>Waypoints &amp; routes</h2>
+    <p>All of this chartplotter's waypoints and routes, as a GPX file.</p>
+    <a id="gpx" class="button plain" href="#" download>Download GPX</a>
+  </section>
+  <section>
+    <h2>Send a file</h2>
+    <p>Goes to the chartplotter's Download folder. You can also drop a file on the screen.</p>
+    <div class="row"><input id="file" type="file"><button id="sendfile" type="button">Send</button></div>
+    <progress id="fileprogress" max="1" value="0" hidden></progress>
+    <p id="filestatus"></p>
+  </section>
+  <section>
+    <button id="reconnect" type="button" class="plain">Reconnect</button>
+    <button id="forget" type="button" class="plain danger">Forget password</button>
+  </section>
+  <section>
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</aside>
+
+<dialog id="login">
+  <form method="dialog" id="login-form">
+    <h2 id="login-title">Password</h2>
+    <p id="login-text">This chartplotter's WiFi password. It is kept, so it is asked only once.</p>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <p id="login-error" class="error" hidden></p>
+    <div class="buttons">
+      <a href="../" class="button plain">Cancel</a>
+      <button id="login-ok" type="submit">Connect</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="remote.js"></script>
+</body>
+</html>

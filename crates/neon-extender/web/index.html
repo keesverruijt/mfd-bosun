@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="NEON">
+<meta name="theme-color" content="#000000">
+<title>NEON Extender</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <h1>NEON Extender</h1>
+  <span id="state"></span>
+</header>
+<main>
+  <form id="login" hidden>
+    <h2>Log in</h2>
+    <p>These pages have a password.</p>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Password" required>
+    <label class="check"><input id="remember" type="checkbox" checked> Remember on this device</label>
+    <p id="login-error" class="error" hidden></p>
+    <button type="submit">Log in</button>
+  </form>
+  <section id="list">
+    <h2>Chartplotters</h2>
+    <ul id="plotters" class="cards"></ul>
+    <p id="none" class="empty" hidden>Looking for chartplotters… They are found by themselves when this computer is on the
+      same network as them.</p>
+  </section>
+  <section id="fs" hidden>
+    <h2>Sonar</h2>
+    <ul id="sonars" class="cards"></ul>
+  </section>
+</main>
+<input id="pick" type="file" hidden>
+<footer><span id="version"></span> <a id="logout" href="#" hidden>Log out</a></footer>
+<script type="module" src="app.js"></script>
+</body>
+</html>

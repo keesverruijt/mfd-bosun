@@ -1,0 +1,25 @@
+# systemd unit for navico-neon-extender (Raspberry Pi or any Linux):
+#   sudo install -m 755 navico-neon-extender /usr/local/bin/
+#   sudo install -m 644 navico-neon-extender.service /etc/systemd/system/
+#   sudo systemctl enable --now navico-neon-extender
+#   journalctl -u navico-neon-extender -f
+[Unit]
+Description=Navico NEON chartplotter screens in a browser, and ForwardScan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/navico-neon-extender
+# options as environment variables, e.g. NEON_EXTENDER_PASSWORD (a password for the remote screens)
+EnvironmentFile=-/etc/default/navico-neon-extender
+Restart=always
+DynamicUser=yes
+# the chartplotters' passwords: /var/lib/navico-neon-extender/credentials.json
+StateDirectory=navico-neon-extender
+StateDirectoryMode=0700
+# lets it add a 169.254 address for ForwardScan settings changes without running as root
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

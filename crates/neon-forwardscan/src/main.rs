@@ -1,15 +1,9 @@
 //! neon-forwardscan: shows a Navico NOS sonar device's ForwardScan in a web page, and puts that page on the
 //! home screen of the Navico / B&G / Simrad / Lowrance chartplotters on the same network.
 
-mod net;
-mod netif;
-mod protocol;
-mod state;
-mod web;
-
 use clap::Parser;
+use neon_forwardscan::{netif, Advertise, ForwardScan, Options};
 use std::net::{Ipv4Addr, SocketAddrV4};
-use std::time::Duration;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -46,32 +40,22 @@ async fn main() {
     )
     .init();
 
-    let state = state::State::new(!args.read_only);
-    for (what, task) in [
-        (
-            "ForwardScan (UDP 10755)",
-            tokio::spawn(net::receive_pings(state.clone())),
-        ),
-        (
-            "ForwardScan settings (UDP 10756)",
-            tokio::spawn(net::receive_settings(state.clone())),
-        ),
-        (
-            "chartplotter announcements (UDP 2052)",
-            tokio::spawn(net::receive_announcements(state.clone())),
-        ),
-    ] {
-        tokio::spawn(async move {
-            match task.await {
-                Ok(Err(e)) => {
-                    log::error!("cannot receive {what}: {e}");
-                    std::process::exit(1);
-                }
-                Err(e) => log::error!("{what}: {e}"),
-                Ok(Ok(())) => {}
-            }
-        });
-    }
+    let fs = match ForwardScan::start(Options {
+        interface: args.interface,
+        add_link_local: !args.no_link_local,
+        allow_control: !args.read_only,
+        advertise: (!args.no_advertise).then(|| Advertise {
+            name: args.name.clone(),
+            port: args.port,
+            path: "/".into(),
+        }),
+    }) {
+        Ok(fs) => fs,
+        Err(e) => {
+            log::error!("cannot receive {e}");
+            std::process::exit(1);
+        }
+    };
 
     let listener =
         match tokio::net::TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, args.port))
@@ -88,33 +72,14 @@ async fn main() {
             log::info!("page at http://{a}:{}/ ({})", args.port, i.name);
         }
     }
-    let app = web::router(state.clone());
+    let app = fs.router();
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             log::error!("web server: {e}");
         }
     });
-    if !args.no_advertise {
-        tokio::spawn(net::advertise(state.clone(), args.port, args.name.clone()));
-    }
-
-    let mut keeper = net::LinkKeeper::new(net::NetOptions {
-        interface: args.interface,
-        add_link_local: !args.no_link_local,
-    });
-    let mut tick = tokio::time::interval(Duration::from_secs(3));
-    let stop = shutdown();
-    tokio::pin!(stop);
-    loop {
-        tokio::select! {
-            _ = tick.tick() => {
-                keeper.tick(&state);
-                state.refresh_sources();
-            }
-            _ = &mut stop => break,
-        }
-    }
-    keeper.cleanup();
+    shutdown().await;
+    fs.stop().await;
 }
 
 async fn shutdown() {

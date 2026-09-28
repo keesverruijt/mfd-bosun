@@ -17,7 +17,7 @@ const ANNOUNCE_PORT: u16 = 2052; // the chartplotters announce themselves here
 const ADVERTISE_PORT: u16 = 2053; // and look for web apps here
 
 /// A UDP socket on a port others on this host (Signal K, the Signal K plugin) may listen on too.
-fn shared_socket(port: u16) -> std::io::Result<UdpSocket> {
+pub fn shared_socket(port: u16) -> std::io::Result<UdpSocket> {
     let s = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     s.set_reuse_address(true)?;
     #[cfg(unix)]
@@ -38,8 +38,28 @@ fn v4(a: std::net::SocketAddr) -> Option<Ipv4Addr> {
     }
 }
 
-pub async fn receive_pings(state: State) -> std::io::Result<()> {
-    let sock = shared_socket(protocol::PORT)?;
+/// The sockets of the three receivers, bound up front so that a failure shows at start.
+pub struct Sockets {
+    pub pings: UdpSocket,
+    pub settings: UdpSocket,
+    pub announcements: UdpSocket,
+}
+
+impl Sockets {
+    pub fn bind() -> std::io::Result<Self> {
+        let bind = |what: &str, port| {
+            shared_socket(port)
+                .map_err(|e| std::io::Error::new(e.kind(), format!("{what} (UDP {port}): {e}")))
+        };
+        Ok(Sockets {
+            pings: bind("ForwardScan", protocol::PORT)?,
+            settings: bind("ForwardScan settings", protocol::CONTROL_PORT)?,
+            announcements: bind("chartplotter announcements", ANNOUNCE_PORT)?,
+        })
+    }
+}
+
+pub async fn receive_pings(state: State, sock: UdpSocket) -> std::io::Result<()> {
     let mut r = protocol::Reassembler::default();
     let mut buf = vec![0u8; 2048];
     loop {
@@ -63,8 +83,7 @@ pub async fn receive_pings(state: State) -> std::io::Result<()> {
     }
 }
 
-pub async fn receive_settings(state: State) -> std::io::Result<()> {
-    let sock = shared_socket(protocol::CONTROL_PORT)?;
+pub async fn receive_settings(state: State, sock: UdpSocket) -> std::io::Result<()> {
     let mut buf = vec![0u8; 2048];
     loop {
         let (n, from) = sock.recv_from(&mut buf).await?;
@@ -86,8 +105,7 @@ pub async fn receive_settings(state: State) -> std::io::Result<()> {
 }
 
 /// The chartplotters' JSON announcements: name, model, and both their addresses.
-pub async fn receive_announcements(state: State) -> std::io::Result<()> {
-    let sock = shared_socket(ANNOUNCE_PORT)?;
+pub async fn receive_announcements(state: State, sock: UdpSocket) -> std::io::Result<()> {
     let mut joined: HashSet<Ipv4Addr> = HashSet::new();
     let mut buf = vec![0u8; 8192];
     let mut rejoin = tokio::time::interval(Duration::from_secs(10));
@@ -261,7 +279,7 @@ pub fn send_control(state: &State, dest: Ipv4Addr, block: &[u8]) -> std::io::Res
 /// the page whenever anything else in the message changes, and raises a "not found" alarm 20-25 s
 /// after the last one. So: every 5 s, and from one interface only, since each interface would give
 /// another URL.
-pub async fn advertise(state: State, port: u16, name: String) {
+pub async fn advertise(state: State, port: u16, path: String, name: String) {
     // the chartplotters announce themselves every second: hear them first, so the first advert
     // already goes out on their interface (a later switch would reload the page on them)
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -283,12 +301,12 @@ pub async fn advertise(state: State, port: u16, name: String) {
         };
         if current.as_ref() != Some(&(iface.name.clone(), ip)) {
             log::info!(
-                "advertising the page to the chartplotters on {} as http://{ip}:{port}/",
+                "advertising the page to the chartplotters on {} as http://{ip}:{port}{path}",
                 iface.name
             );
             current = Some((iface.name.clone(), ip));
         }
-        let base = format!("http://{ip}:{port}");
+        let base = format!("http://{ip}:{port}{path}");
         // BrowserPanel is unused on NEON but kept, well-formed, for the older NOS chartplotters
         let msg = json!({
             "Version": "1",
@@ -296,8 +314,8 @@ pub async fn advertise(state: State, port: u16, name: String) {
             "FeatureName": name,
             "IP": ip.to_string(),
             "Text": [{ "Language": "en", "Name": name }],
-            "Icon": format!("{base}/icon.png?v=2"), // a new URL makes the MFDs fetch the icon again
-            "URL": format!("{base}/"),
+            "Icon": format!("{base}icon.png?v=2"), // a new URL makes the MFDs fetch the icon again
+            "URL": base,
             "BrowserPanel": {
                 "Enable": true,
                 "ProgressBarEnable": true,

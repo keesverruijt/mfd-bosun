@@ -8,6 +8,7 @@ Wants=network-online.target
 
 [Service]
 # options in /etc/default/mfd-bosun: MFD_BOSUN_PASSWORD, MFD_BOSUN_LISTEN, and MFD_BOSUN_ARGS for the rest
+Environment=MFD_BOSUN_ARGS=
 EnvironmentFile=-/etc/default/mfd-bosun
 ExecStart=/usr/local/bin/mfd-bosun $MFD_BOSUN_ARGS
 Restart=always

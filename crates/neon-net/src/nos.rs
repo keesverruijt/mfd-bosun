@@ -13,6 +13,9 @@
 //!   0x0004  <-  STATUS         7 bytes, the last 1 when input is allowed
 //!   0x1001  ->  TOUCH          u32 ms, u16 x, u16 y (screen pixels), u8 0 down / 1 move / 2 up, u8 fingers
 //!   0x1003  ->  KEY            u32 code (a Linux key code), u32 1 down / 0 up
+//!
+//! Their web server (HTTP, port 80, no authentication) gives the backups the vendor's app makes:
+//! [`WAYPOINTS`] (a USR file) and [`SETTINGS`].
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -24,6 +27,13 @@ pub const PORT: u16 = 6633;
 pub const RTSP_PORT: u16 = 554;
 pub const SERVICE_TYPE: &str = "_navico-mfd-rp._tcp.local.";
 const TIMEOUT: Duration = Duration::from_secs(4);
+pub const HTTP_PORT: u16 = 80;
+/// All waypoints, routes and trails, as `WaypointsRoutesTracks.usr`.
+pub const WAYPOINTS: &str = "/cgi-bin/download.cgi";
+/// The settings, as `Settings.set`.
+pub const SETTINGS: &str = "/cgi-bin/settings.cgi";
+const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
+const FETCH_MAX: usize = 64 << 20;
 const MAX_FRAME: usize = 0x400;
 
 const SESSION: u16 = 0x0001;
@@ -177,6 +187,53 @@ pub async fn info(addr: SocketAddr) -> std::io::Result<Info> {
     let (_r, mut w, info) = open(addr).await?;
     let _ = w.shutdown().await;
     Ok(info)
+}
+
+/// `path` from the unit's web server: the body of a 200 answer.
+pub async fn fetch(ip: std::net::IpAddr, path: &str) -> std::io::Result<Vec<u8>> {
+    let addr = SocketAddr::new(ip, HTTP_PORT);
+    let get = async {
+        let mut s = TcpStream::connect(addr).await?;
+        let host = match ip {
+            std::net::IpAddr::V6(v6) => format!("[{v6}]"),
+            v4 => v4.to_string(),
+        };
+        s.write_all(
+            format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nAccept: */*\r\n\r\n").as_bytes(),
+        )
+        .await?;
+        // HTTP/1.0: the answer ends where the connection does
+        let mut d = Vec::new();
+        (&mut s)
+            .take(FETCH_MAX as u64 + 1)
+            .read_to_end(&mut d)
+            .await?;
+        if d.len() > FETCH_MAX {
+            return Err(std::io::Error::other("too big"));
+        }
+        Ok::<_, std::io::Error>(d)
+    };
+    let d = tokio::time::timeout(FETCH_TIMEOUT, get)
+        .await
+        .map_err(|_| std::io::Error::other("no answer"))??;
+    // the head ends at an empty line; the unit's CGI ends its header lines with a bare \n
+    let (head_end, body) = (0..d.len())
+        .find_map(|i| {
+            if d[i..].starts_with(b"\n\n") {
+                Some((i, i + 2))
+            } else if d[i..].starts_with(b"\n\r\n") {
+                Some((i, i + 3))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| std::io::Error::other("not an HTTP answer"))?;
+    let status = String::from_utf8_lossy(&d[..head_end]);
+    let status = status.lines().next().unwrap_or("").trim();
+    if status.split_whitespace().nth(1) != Some("200") {
+        return Err(std::io::Error::other(format!("{path}: {status}")));
+    }
+    Ok(d[body..].to_vec())
 }
 
 /// Whether input is allowed, as the unit says.

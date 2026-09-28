@@ -1,13 +1,20 @@
-//! A chartplotter's waypoints and routes (as `/api/v1/sync/...` has them) as GPX 1.1.
+//! A chartplotter's waypoints, routes and tracks as GPX 1.1.
 //!
-//! Waypoint: id, created_at, updated_at, deleted_at (ms), name, latitude, longitude, category_id,
-//! color_id, tags, description. Route: the same plus points [{id, name, latitude, longitude, point_type}]
-//! and legs. Deleted items (deleted_at > 0) are left out.
+//! Waypoints and routes as a NEON chartplotter's `/api/v1/sync/...` has them (a NOS unit's are read into
+//! the same shape). Waypoint: id, created_at, updated_at, deleted_at (ms), name, latitude, longitude,
+//! category_id, color_id, tags, description. Route: the same plus points [{id, name, latitude, longitude,
+//! point_type}] and legs. Deleted items (deleted_at > 0) are left out.
 
 use serde_json::Value;
 use std::fmt::Write;
 
-pub fn gpx(creator: &str, waypoints: &[Value], routes: &[Value]) -> String {
+/// A track: its points as (latitude, longitude, epoch ms).
+pub struct Track {
+    pub name: String,
+    pub points: Vec<(f64, f64, Option<i64>)>,
+}
+
+pub fn gpx(creator: &str, waypoints: &[Value], routes: &[Value], tracks: &[Track]) -> String {
     let mut s = String::new();
     s.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     let _ = writeln!(
@@ -48,6 +55,28 @@ pub fn gpx(creator: &str, waypoints: &[Value], routes: &[Value]) -> String {
         }
         s.push_str("  </rte>\n");
     }
+    for t in tracks.iter().filter(|t| !t.points.is_empty()) {
+        s.push_str("  <trk>\n");
+        text(&mut s, "    ", "name", Some(&Value::from(t.name.as_str())));
+        s.push_str("    <trkseg>\n");
+        for &(lat, lon, ms) in &t.points {
+            if !((-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)) {
+                continue;
+            }
+            match ms.and_then(iso) {
+                Some(t) => {
+                    let _ = writeln!(
+                        s,
+                        "      <trkpt lat=\"{lat:.7}\" lon=\"{lon:.7}\"><time>{t}</time></trkpt>"
+                    );
+                }
+                None => {
+                    let _ = writeln!(s, "      <trkpt lat=\"{lat:.7}\" lon=\"{lon:.7}\"/>");
+                }
+            }
+        }
+        s.push_str("    </trkseg>\n  </trk>\n");
+    }
     s.push_str("</gpx>\n");
     s
 }
@@ -64,7 +93,14 @@ fn position(v: &Value) -> Option<(f64, f64)> {
 
 /// created_at (epoch ms) as ISO 8601 UTC.
 fn time(v: &Value) -> Option<String> {
-    let ms = v.get("created_at")?.as_i64().filter(|ms| *ms > 0)?;
+    iso(v.get("created_at")?.as_i64()?)
+}
+
+/// Epoch ms as ISO 8601 UTC.
+fn iso(ms: i64) -> Option<String> {
+    if ms <= 0 {
+        return None;
+    }
     let secs = ms / 1000;
     let (days, rem) = (secs.div_euclid(86400), secs.rem_euclid(86400));
     // days since 1970-01-01 to a civil date (Howard Hinnant's algorithm)
@@ -117,12 +153,20 @@ mod tests {
         let rts = [json!({"id": "r", "name": "Home", "points": [
             {"id": "p1", "name": "Start", "latitude": 33.0, "longitude": 129.0},
             {"id": "p2", "latitude": 33.1, "longitude": 129.1}]})];
-        let g = gpx("test", &wps, &rts);
+        let trk = [Track {
+            name: "Track001".into(),
+            points: vec![(33.5, 129.5, Some(1790000000000)), (33.6, 129.6, None)],
+        }];
+        let g = gpx("test", &wps, &rts, &trk);
         assert!(g.contains("<wpt lat=\"33.39\" lon=\"129.84\">"));
         assert!(g.contains("<name>Neon &amp; Two</name>"));
         assert!(g.contains("<sym>Anchoring</sym>"));
         assert!(g.contains("<time>2026-09-21T14:13:20Z</time>"));
         assert!(!g.contains("gone"));
         assert!(g.contains("<rtept lat=\"33\" lon=\"129\">") && g.contains("<name>Start</name>"));
+        assert!(g.contains(
+            "<trkpt lat=\"33.5000000\" lon=\"129.5000000\"><time>2026-09-21T14:13:20Z</time>"
+        ));
+        assert!(g.contains("<trkpt lat=\"33.6000000\" lon=\"129.6000000\"/>"));
     }
 }

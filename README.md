@@ -8,6 +8,10 @@ chartplotters (B&G Zeus / Simrad NSS / Lowrance, firmware 2.6.x):
   mirroring, so nothing is installed on the chartplotter. The older NOS units (Zeus³, NSS evo3, HDS
   Live, Vulcan and their siblings) work too, through the screen mirroring and remote control the
   vendor's phone app uses.
+- **Waypoints, routes and files.** Each chartplotter's waypoints and routes as a GPX file (an older
+  NOS unit's tracks too), a NEON chartplotter can be sent a file, and a NOS unit's own backups (its
+  waypoints, routes and tracks as a `.usr` file, and its settings as a `.set` file, as the vendor's app
+  makes them) can be downloaded.
 - **ForwardScan.** It shows a NOS sonar's ForwardScan on its page, and puts a ForwardScan tile on the
   chartplotters that opens it (this is [neon-forwardscan](crates/neon-forwardscan), built in).
 
@@ -74,7 +78,8 @@ screens need a login, which a browser can remember (a cookie with a hash of the 
 a new password logs everyone out). ForwardScan stays open: the chartplotters show it themselves. Without
 TLS the password crosses the network in the clear, so it keeps out the curious, not someone listening in.
 A NOS unit's screen has no protection of its own: anyone on the network can watch it, with this program or
-without, and control it once the unit allowed this program.
+without, and control it once the unit allowed this program. The same goes for its waypoints, routes, tracks
+and settings, which its web server gives to anyone who asks.
 Run it only on a network you trust, and only with chartplotters you own or may use.
 
 ## How it works
@@ -117,6 +122,11 @@ IDR frame only when its stream starts, and a browser starts decoding only at one
 joins later, the program turns the next whole picture the unit sends (about once a second, an ordinary
 frame of I slices) into an IDR frame by rewriting its slice headers, and numbers the frames after it on
 from there. The vendor's app, being ffmpeg, simply starts at such a picture.
+
+The backups are what the unit's web server (HTTP, port 80) gives the vendor's app:
+`/cgi-bin/download.cgi` is `WaypointsRoutesTracks.usr`, all waypoints, routes and trails in Navico's USR
+format (version 6 on the Vulcan; read here for the GPX, trails included), and `/cgi-bin/settings.cgi` is
+`Settings.set`.
 
 The protocol notes and the original Node/TypeScript reference are in
 [navico-neon-remote](https://github.com/keesverruijt/navico-neon-remote).

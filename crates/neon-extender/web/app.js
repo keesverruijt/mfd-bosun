@@ -11,15 +11,21 @@ function plotterCard(p) {
   const brand = brands[p.brand] ?? p.brand
   const detail = [p.name !== p.model ? `${brand} ${p.model}` : brand, p.address, `v${p.osVersion}`].filter(Boolean)
   const s = encodeURIComponent(p.serial)
-  // waypoints and files need its password known, and it on; an older NOS unit has neither
-  const actions =
-    p.online && p.hasPassword && p.kind !== 'nos'
-      ? `<div class="actions">
-      <a class="action" href="remote/api/plotters/${s}/export.gpx" download title="All its waypoints and routes">Waypoints &amp; routes (GPX)</a>
+  // waypoints and files need its password known, and it on; an older NOS unit takes no files, but gives
+  // its own backups (the vendor's app's)
+  const gpx = `<a class="action" href="remote/api/plotters/${s}/export.gpx" download title="All its waypoints and routes${p.kind === 'nos' ? ', and its tracks' : ''}">Waypoints &amp; routes (GPX)</a>`
+  let actions = ''
+  if (p.online && p.kind === 'nos') {
+    actions = `<div class="actions">${gpx}
+      <a class="action" href="remote/api/plotters/${s}/backup/WaypointsRoutesTracks.usr" download title="Its own backup of waypoints, routes and tracks (USR), as the vendor's app makes it">Backup (.usr)</a>
+      <a class="action" href="remote/api/plotters/${s}/backup/Settings.set" download title="Its settings, as the vendor's app backs them up">Settings (.set)</a>
+    </div>`
+  } else if (p.online && p.hasPassword) {
+    actions = `<div class="actions">${gpx}
       <button class="action" type="button" data-send="${esc(p.serial)}" title="To its Download folder; or drop a file here">Send a file</button>
       <span class="upload" id="up-${esc(p.serial)}">${esc(uploads[p.serial]?.text ?? '')}</span>
     </div>`
-      : ''
+  }
   return `<li class="plotter${p.online ? '' : ' offline'}" data-serial="${esc(p.serial)}">
     <a class="card" href="remote/?plotter=${s}">
       <span class="dot" title="${p.online ? 'on' : 'not answering'}"></span>

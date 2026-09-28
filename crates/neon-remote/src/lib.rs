@@ -13,12 +13,14 @@
 //!   GET    /api/plotters                    -> [{ serial, model, brand, osVersion, name, address, online, hasPassword }]
 //!   POST   /api/plotters/{serial}/password  -> { password }: pairs with it, and keeps it when it works
 //!   DELETE /api/plotters/{serial}/password  -> forgets it
-//!   GET    /api/plotters/{serial}/export.gpx -> its waypoints and routes, as GPX
+//!   GET    /api/plotters/{serial}/export.gpx -> its waypoints and routes (and a NOS unit's tracks), as GPX
+//!   GET    /api/plotters/{serial}/backup/{WaypointsRoutesTracks.usr|Settings.set} -> a NOS unit's own backups
 //!   GET    /signal?plotter=<serial>&key=<n> -> WebSocket to the chartplotter's /ws/receiver/<n>
 
 mod gpx;
 mod h264;
 mod nos;
+mod usr;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -101,6 +103,7 @@ impl Remote {
                 post(set_password).delete(forget_password),
             )
             .route("/api/plotters/{serial}/export.gpx", get(export_gpx))
+            .route("/api/plotters/{serial}/backup/{file}", get(nos_backup))
             .route("/signal", get(signal))
             .fallback(get(asset))
             .with_state(self.clone())
@@ -419,9 +422,29 @@ async fn forget_password(State(r): State<Remote>, Path(serial): Path<String>) ->
 }
 
 async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Response {
-    let (p, waypoints, routes) = match r.waypoints_and_routes(&serial).await {
-        Ok(x) => x,
-        Err((status, e)) => return fail(status, e),
+    let (p, waypoints, routes, tracks) = match r.discovery.get(&serial).filter(|p| p.nos.is_some())
+    {
+        // a NOS unit: its own backup, read
+        Some(p) => {
+            let d = match neon_net::nos::fetch(p.addr.ip(), neon_net::nos::WAYPOINTS).await {
+                Ok(d) => d,
+                Err(e) => return fail(StatusCode::BAD_GATEWAY, e.to_string()),
+            };
+            match usr::parse(&d) {
+                Ok(u) => (p, u.waypoints, u.routes, u.tracks),
+                Err(e) => {
+                    log::info!("the waypoints of {serial}: {e}");
+                    return fail(
+                        StatusCode::BAD_GATEWAY,
+                        format!("the chartplotter's file: {e}"),
+                    );
+                }
+            }
+        }
+        None => match r.waypoints_and_routes(&serial).await {
+            Ok((p, w, rt)) => (p, w, rt, Vec::new()),
+            Err((status, e)) => return fail(status, e),
+        },
     };
     let live = |v: &Vec<serde_json::Value>| {
         v.iter()
@@ -429,14 +452,67 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
             .count()
     };
     log::info!(
-        "GPX of {} ({serial}): {} waypoints, {} routes",
+        "GPX of {} ({serial}): {} waypoints, {} routes, {} tracks",
         p.model,
         live(&waypoints),
-        live(&routes)
+        live(&routes),
+        tracks.len()
     );
     let name = p.name.clone().unwrap_or_else(|| p.model.clone());
-    let file: String = name
-        .chars()
+    (
+        [
+            (header::CONTENT_TYPE, "application/gpx+xml".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}.gpx\"", file_name(&name)),
+            ),
+        ],
+        gpx::gpx(
+            &format!("navico-neon-extender ({name})"),
+            &waypoints,
+            &routes,
+            &tracks,
+        ),
+    )
+        .into_response()
+}
+
+/// A NOS unit's own backups, as its vendor's app makes them: `WaypointsRoutesTracks.usr` or `Settings.set`.
+async fn nos_backup(
+    State(r): State<Remote>,
+    Path((serial, file)): Path<(String, String)>,
+) -> Response {
+    let path = match file.as_str() {
+        "WaypointsRoutesTracks.usr" => neon_net::nos::WAYPOINTS,
+        "Settings.set" => neon_net::nos::SETTINGS,
+        _ => return fail(StatusCode::NOT_FOUND, "no such backup"),
+    };
+    let Some(p) = r.discovery.get(&serial).filter(|p| p.nos.is_some()) else {
+        return fail(StatusCode::NOT_FOUND, format!("no NOS unit {serial}"));
+    };
+    match neon_net::nos::fetch(p.addr.ip(), path).await {
+        Ok(d) => {
+            let name = p.name.clone().unwrap_or_else(|| p.model.clone());
+            log::info!("{file} of {} ({serial}): {} bytes", p.model, d.len());
+            (
+                [
+                    (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        format!("attachment; filename=\"{}-{file}\"", file_name(&name)),
+                    ),
+                ],
+                d,
+            )
+                .into_response()
+        }
+        Err(e) => fail(StatusCode::BAD_GATEWAY, e.to_string()),
+    }
+}
+
+/// A chartplotter's name as part of a file name.
+fn file_name(name: &str) -> String {
+    name.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' {
                 c
@@ -444,22 +520,7 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
                 '_'
             }
         })
-        .collect();
-    (
-        [
-            (header::CONTENT_TYPE, "application/gpx+xml".to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{file}.gpx\""),
-            ),
-        ],
-        gpx::gpx(
-            &format!("navico-neon-extender ({name})"),
-            &waypoints,
-            &routes,
-        ),
-    )
-        .into_response()
+        .collect()
 }
 
 #[derive(Deserialize)]

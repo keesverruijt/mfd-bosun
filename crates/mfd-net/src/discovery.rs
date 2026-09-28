@@ -9,7 +9,7 @@
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -87,6 +87,8 @@ struct Inner {
     /// Every address worth probing: from mDNS, from the user, from what answered before.
     candidates: HashSet<SocketAddr>,
     names: BTreeMap<Ipv4Addr, String>,
+    /// Why the last probe of an address failed, so that it is logged once, not every probe.
+    failing: HashMap<SocketAddr, String>,
 }
 
 #[derive(Clone)]
@@ -208,35 +210,32 @@ impl Discovery {
     }
 
     async fn probe(self, addr: SocketAddr) {
-        let info = if addr.port() == nos::PORT {
-            let Ok(n) = nos::info(addr).await else {
-                return;
-            };
-            Found {
+        let found = if addr.port() == nos::PORT {
+            nos::info(addr).await.map(|n| Found {
                 serial: nos_id(&n),
                 model: n.model.clone(),
                 brand: n.brand().to_string(),
                 os_version: n.firmware.clone(),
                 name: Some(n.name.clone()).filter(|s| !s.is_empty()),
                 nos: Some(n),
-            }
+            })
         } else {
-            let Ok(i) = api::info(addr).await else {
-                return;
-            };
-            Found {
+            api::info(addr).await.map(|i| Found {
                 serial: i.serial_number,
                 model: i.model,
                 brand: i.brand,
                 os_version: i.os_version,
                 name: None,
                 nos: None,
-            }
+            })
         };
-        if info.serial.is_empty() {
-            return;
-        }
+        let info = match found {
+            Ok(f) if !f.serial.is_empty() => f,
+            Ok(_) => return self.probe_failed(addr, "no serial number".into()),
+            Err(e) => return self.probe_failed(addr, e.to_string()),
+        };
         let mut g = self.lock();
+        g.failing.remove(&addr);
         let name = match addr.ip() {
             IpAddr::V4(ip) => g.names.get(&ip).cloned(),
             _ => None,
@@ -285,6 +284,14 @@ impl Discovery {
         drop(g);
         if changed {
             self.changed.send_replace(());
+        }
+    }
+
+    /// Every address is probed again every [`PROBE_INTERVAL`], and a chartplotter's other port (8444 or
+    /// 6633) never answers: so log why only when that changes.
+    fn probe_failed(&self, addr: SocketAddr, why: String) {
+        if self.lock().failing.insert(addr, why.clone()).as_ref() != Some(&why) {
+            log::debug!("no chartplotter at {addr}: {why}");
         }
     }
 }

@@ -13,7 +13,8 @@ Tested with a Vulcan 7R, with a Zeus SRX-16 showing the page.
 
 ## Running it
 
-Download the binary for your computer from the releases, and start it on a computer that is on the
+It is part of [navico-neon-extender](../../README.md), which includes it; to run it on its own, build
+it there (`cargo build --release -p neon-forwardscan`) and start it on a computer that is on the
 boat's Ethernet:
 
 ```sh

@@ -157,12 +157,6 @@ rustup target add aarch64-unknown-linux-musl   # 64-bit Raspberry Pi OS; armv7-u
 cargo build --release --target aarch64-unknown-linux-musl -p neon-extender
 ```
 
-To pull later changes from the standalone neon-forwardscan repository:
-
-```sh
-git subtree pull --prefix crates/neon-forwardscan git@github.com:keesverruijt/neon-forwardscan.git main
-```
-
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE).

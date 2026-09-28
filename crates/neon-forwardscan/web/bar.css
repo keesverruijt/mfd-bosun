@@ -1,0 +1,61 @@
+/* Shared look of the webapp pages: the view, and a control bar on the right like the
+   MFDs' sonar menu: hidden behind a menu button (top right, like the MFD apps) and sliding in
+   over the view (.row = one setting, .seg = segmented buttons driving the select after it,
+   .switch = a checkbox as a toggle). bar.js wires .seg and the sliders' <output>. */
+  :root { color-scheme: dark; --bar: #1c1f23; --row: #25292e; --line: #33383f; --text: #e8eaed; --dim: #9aa0a6; --accent: #1a9cff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; display: flex; flex-direction: column; height: 100vh; background: #000; color: var(--text); font: 14px/1.3 system-ui, sans-serif; }
+  a { color: var(--accent); }
+  main { flex: 1; min-height: 0; display: flex; position: relative; overflow: hidden; }
+  #wrap { position: relative; flex: 1; min-width: 0; }
+  #depth { position: absolute; left: 8px; top: 24px; z-index: 2; background: #000b; color: #fff; padding: 6px 14px 10px; border-radius: 6px; font-size: 60px; font-weight: 700; line-height: 1; }
+  #depth small { display: block; font-size: 16px; font-weight: 400; color: var(--dim); margin-bottom: 3px; }
+  #status:empty, #status[hidden] { display: none }
+  #paused { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 3; pointer-events: none; font-size: 72px; font-weight: 700; color: #fff; text-shadow: 0 0 12px #000, 0 0 3px #000; }
+  #paused[hidden] { display: none; }
+  #status { position: absolute; left: 8px; bottom: 8px; font-size: 13px; z-index: 2; max-width: 80%; color: #ddd; background: #000a; padding: 3px 6px; border-radius: 4px; }
+
+  /* the control bar on the right, like the MFDs' sonar menu */
+  #bar { position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; width: min(290px, 90%); font-size: 17px; background: var(--bar); border-left: 1px solid var(--line); overflow-y: auto; padding-bottom: 8px;
+    transform: translateX(100%); visibility: hidden; transition: transform .2s ease, visibility 0s linear .2s; box-shadow: -6px 0 18px #0008; }
+  #bar.open { transform: none; visibility: visible; transition: transform .2s ease; }
+  #menu { position: absolute; top: 40px; right: 14px; z-index: 4; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 10px; background: #1c1f23e6; color: #fff; box-shadow: 0 1px 4px #0006; }
+  #menu:active { background: var(--accent); }
+  #bar h2 { margin: 0; padding: 14px 14px 8px; font-size: 14px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+  #bar h2[hidden], .grp[hidden] { display: none; }
+  .row { margin: 0 8px 6px; padding: 8px 10px; background: var(--row); border-radius: 6px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; min-height: 50px; }
+  .row > span { color: var(--text); }
+  .row output { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .row input[type=range] { width: 100%; accent-color: var(--accent); }
+  select { font: inherit; color: var(--text); background: #0e1013; border: 1px solid var(--line); border-radius: 4px; padding: 5px 6px; }
+  .row select { width: 100%; }
+  .row.inline select { width: auto; min-width: 96px; }
+  /* drop-downs drawn by the page (bar.js): a button with the choice, and its list below it */
+  select.picked { display: none; }
+  .row { position: relative; }
+  .pick { position: relative; text-align: left; color: var(--text); background: #0e1013; border: 1px solid var(--line); border-radius: 4px; padding: 5px 26px 5px 8px; min-width: 96px; }
+  .pick::after { content: ''; position: absolute; right: 9px; top: 50%; margin-top: -3px; border: 5px solid transparent; border-top-color: var(--dim); border-bottom: 0; }
+  .row:not(.inline) > .pick { width: 100%; }
+  .pick:disabled { cursor: default; }
+  .picklist { position: absolute; z-index: 6; right: 10px; top: calc(100% - 4px); min-width: 140px; max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column;
+    background: #0e1013; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px #000a; padding: 4px 0; }
+  .picklist[hidden] { display: none; }
+  .row:not(.inline) > .picklist { left: 10px; }
+  .picklist button { text-align: left; background: none; border: 0; padding: 10px 14px; }
+  .picklist button.on { background: var(--accent); color: #fff; }
+  button { font: inherit; color: var(--text); cursor: pointer; }
+  #pause { width: calc(100% - 16px); margin: 0 8px 6px; min-height: 50px; border: 0; border-radius: 6px; background: var(--accent); font-weight: 600; }
+  #pause.paused { background: #2e7d32; }
+  .seg { display: flex; width: 100%; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .seg button { flex: 1; background: #0e1013; border: 0; border-left: 1px solid var(--line); padding: 9px 2px; font-size: 16px; }
+  .seg button:first-child { border-left: 0; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .seg + select { display: none; }
+  .switch { appearance: none; width: 42px; height: 24px; border-radius: 12px; background: #0e1013; border: 1px solid var(--line); position: relative; cursor: pointer; margin: 0; }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--dim); transition: left .15s; }
+  .switch:checked { background: var(--accent); border-color: var(--accent); }
+  .switch:checked::after { left: 20px; background: #fff; }
+  .note { padding: 6px 14px 10px; font-size: 14px; color: var(--dim); overflow-wrap: anywhere; }
+  .note.warn { color: #ffb74d; }
+  #ctl.off button, #ctl.off .row { opacity: .4; }

@@ -1,0 +1,13 @@
+# Static Linux binaries without a C cross toolchain: Rust's own musl startup files, linked by rust-lld.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+
+# Windows: the C runtime linked in, so no Visual C++ redistributable is needed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

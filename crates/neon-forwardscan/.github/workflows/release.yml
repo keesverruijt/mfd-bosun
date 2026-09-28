@@ -1,0 +1,82 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy -- -D warnings
+      - run: cargo test
+
+  linux:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [aarch64-unknown-linux-musl, armv7-unknown-linux-musleabihf, x86_64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/neon-forwardscan neon-forwardscan-${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-forwardscan-${{ matrix.target }}
+          path: neon-forwardscan-${{ matrix.target }}
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          lipo -create -output neon-forwardscan-macos \
+            target/aarch64-apple-darwin/release/neon-forwardscan target/x86_64-apple-darwin/release/neon-forwardscan
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-forwardscan-macos
+          path: neon-forwardscan-macos
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --target x86_64-pc-windows-msvc
+      - run: copy target\x86_64-pc-windows-msvc\release\neon-forwardscan.exe neon-forwardscan-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-forwardscan-windows-x86_64
+          path: neon-forwardscan-windows-x86_64.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: neon-forwardscan-*

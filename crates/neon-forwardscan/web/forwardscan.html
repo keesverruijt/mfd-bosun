@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Navico ForwardScan</title>
+<link rel="stylesheet" href="bar.css">
+<style>
+  #c { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<main>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="depth"><small>Depth</small><span id="depthv">--</span></div>
+  <div id="status">connecting…</div>
+  <div id="paused" hidden>Paused</div>
+</div>
+<button id="menu" type="button" title="Menu" aria-label="Menu" aria-expanded="false"><svg viewBox="0 0 24 24" width="28" height="28"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
+<aside id="bar">
+  <h2 id="ctlh" hidden>ForwardScan</h2>
+  <div id="ctl" class="grp" hidden>
+    <button id="pause">Pause</button>
+    <label class="row inline"><span>Depth</span><select id="cdepth"></select></label>
+    <label class="row inline"><span>Forward</span><select id="crange"></select></label>
+    <label class="row inline"><span>Noise rejection</span><select id="cnoise">
+      <option value="auto">Auto</option><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+    </select></label>
+    <div class="note warn" id="ctloff" hidden>These settings cannot be changed from here: see Network below.</div>
+  </div>
+  <h2>View</h2>
+  <div class="row" title="The sonar's Point data: the echoes of the last 4 pings as dots, over the bottom (All) or under it (Objects)"><span>Point data</span>
+    <div class="seg" data-for="points"></div><select id="points"><option value="1">All</option><option value="2">Objects</option><option value="0">None</option></select></div>
+  <div class="row" title="Width of the history strip (the depth under the boat, scrolling away to the left)"><span>History</span><output id="hratiov"></output>
+    <input id="hratio" type="range" min="0" max="80" step="1" value="35"></div>
+  <label class="row" title="The sonar's zones: red at its critical depth and range, yellow at 1.5 times that; the bottom turns yellow / red where it enters them"><span>Zones</span><input id="zones" class="switch" type="checkbox"></label>
+  <label class="row" title="The sonar's guideline from the boat"><span>Guideline</span><input id="guide" class="switch" type="checkbox"></label>
+  <div class="row" title="Depths and distances in metres or feet"><span>Units</span>
+    <div class="seg" data-for="units"></div><select id="units"><option value="m" selected>Metres</option><option value="ft">Feet</option></select></div>
+  <div class="row" title="The displays' palettes 1-3"><span>Palette</span>
+    <div class="seg" data-for="pal"></div><select id="pal"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select></div>
+  <div class="row" title="Like the displays' Color setting (0-100)"><span>Color</span><output id="colorv"></output>
+    <input id="color" type="range" min="0" max="100" step="1" value="56"></div>
+  <h2>Source</h2>
+  <label class="row"><select id="src"><option value="">(any)</option></select></label>
+  <h2>Network</h2>
+  <div id="net" class="note">…</div>
+</aside>
+</main>
+</div>
+<script src="echo-colors.js"></script>
+<script src="bar.js"></script>
+<script>
+// ForwardScan of a sonar (see src/protocol.rs): each ping is the bottom's outline ahead of the
+// boat, [forward range ft, depth ft] points, plus the depth under the boat, plus 3000 echo records
+// (angle, range, amplitude) that the sonar draws as "Point data" dots. Same-origin WebSocket on
+// neon-forwardscan's server; ?ws=PORT or ?ws=ws://host:port overrides it for offline dev.
+const BASE = location.pathname.replace(/[^/]*$/, '')
+const WS_PATH = BASE + 'stream'
+function wsUrl () {
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const ov = new URLSearchParams(location.search).get('ws')
+  if (ov) return /^\d+$/.test(ov) ? `${scheme}//${location.hostname}:${ov}` : ov
+  return `${scheme}//${location.host}${WS_PATH}`
+}
+const cv = document.getElementById('c'), ctx = cv.getContext('2d')
+const depthEl = document.getElementById('depthv'), statusEl = document.getElementById('status'), srcSel = document.getElementById('src')
+let W = 0, H = 0, filterAddr = '', last = null
+const echoes = [] // the echo records (Uint8Array, 5 bytes each) of the last pings, newest last
+const DRAWN_PINGS = 4 // the displays draw the last 4 pings
+const RANGE_CELL_FT = 0.023332685
+const pointsSel = document.getElementById('points'), palSel = document.getElementById('pal'), colorEl = document.getElementById('color')
+const unitsSel = document.getElementById('units')
+for (const [el, key] of [[pointsSel, 'points'], [palSel, 'pal'], [colorEl, 'color'], [unitsSel, 'units']]) {
+  try { const v = localStorage.getItem('navico-fs-' + key); if (v !== null) el.value = v } catch (_) {}
+  el.addEventListener('input', () => { try { localStorage.setItem('navico-fs-' + key, el.value) } catch (_) {} draw() })
+}
+const recent = [] // max forward range / depth of the last pings, for a scale when the sonar's settings are not known
+const NICE = [10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 500] // ft
+const hist = [] // the depth under the boat (ft) of the latest pings, newest first (the sonar adds a ping's depth when >= 2 ft)
+const HIST_FORWARD = 50, HIST_STRIP = 350 // newest 50 lead up to the profile in the forward view, 350 in the history strip
+const M_PER_FT = 0.3048
+// Everything is kept in feet, as the sonar has it; only what is shown is converted (Units setting).
+const metres = () => unitsSel.value !== 'ft'
+const toUnit = (ft) => metres() ? ft * M_PER_FT : ft
+const fromUnit = (v) => metres() ? v / M_PER_FT : v
+const unitName = () => metres() ? 'm' : 'ft'
+const r1 = x => Math.round(x * 10) / 10
+// a tick step giving at most `ticks` ticks up to max (in the shown unit)
+const tickStep = (max, ticks) => [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500].find(s => max / s <= ticks) || 1000
+const histEl = document.getElementById('hratio'), zonesEl = document.getElementById('zones'), guideEl = document.getElementById('guide')
+for (const [el, key] of [[histEl, 'hratio'], [zonesEl, 'zones'], [guideEl, 'guide']]) {
+  const val = () => el.type === 'checkbox' ? String(el.checked) : el.value
+  try { const v = localStorage.getItem('navico-fs-' + key); if (v !== null) { if (el.type === 'checkbox') el.checked = v === 'true'; else el.value = v } } catch (_) {}
+  el.addEventListener('input', () => { try { localStorage.setItem('navico-fs-' + key, val()) } catch (_) {} draw() })
+}
+
+function resize () {
+  const r = window.devicePixelRatio || 1
+  W = cv.width = Math.round(cv.clientWidth * r); H = cv.height = Math.round(cv.clientHeight * r)
+  draw()
+}
+window.addEventListener('resize', resize)
+
+// The bottom fill: the sonar hangs a texture from the bottom line in every screen column: a solid band (40 of 480 rows),
+// then a noisy fade to black. Here the fade is smooth (the noise is static, it is not data). Base, caution and critical colours.
+const TEX_RGB = { base: [206, 103, 0], caution: [220, 180, 0], critical: [220, 34, 0] }
+const texCache = {}
+function texture (kind, h) {
+  const key = kind + h
+  if (texCache[key]) return texCache[key]
+  const c = document.createElement('canvas'); c.width = 1; c.height = h
+  const g = c.getContext('2d'), grad = g.createLinearGradient(0, 0, 0, h), [r, gg, b] = TEX_RGB[kind]
+  const at = k => `rgb(${r * k | 0},${gg * k | 0},${b * k | 0})`
+  grad.addColorStop(0, at(1)); grad.addColorStop(40 / 480, at(1)); grad.addColorStop(60 / 480, at(0.7))
+  grad.addColorStop(0.5, at(0.35)); grad.addColorStop(0.9, at(0)); grad.addColorStop(1, at(0))
+  g.fillStyle = grad; g.fillRect(0, 0, 1, h)
+  for (const k in texCache) if (k.startsWith(kind)) delete texCache[k]
+  return (texCache[key] = c)
+}
+// fill below a polyline of screen points [[x, y], ...] (x ascending) column by column; kindAt(x) picks the texture
+function fillBelow (poly, kindAt) {
+  if (poly.length < 2) return
+  const th = H // the texture spans the panel height (480 rows on a NOS panel)
+  let j = 0
+  for (let x = Math.max(0, Math.ceil(poly[0][0])); x < Math.min(W, poly[poly.length - 1][0]); x++) {
+    while (j < poly.length - 2 && poly[j + 1][0] <= x) j++
+    const [xa, ya] = poly[j], [xb, yb] = poly[j + 1]
+    const y = xb > xa ? ya + (yb - ya) * (x - xa) / (xb - xa) : ya
+    ctx.drawImage(texture(kindAt(x), th), 0, 0, 1, th, x, Math.round(y), 1, th)
+  }
+}
+function strokePoly (poly, color, width, dash) {
+  ctx.beginPath(); poly.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.setLineDash(dash || []); ctx.stroke(); ctx.setLineDash([])
+}
+
+// Laid out like the NOS ForwardScan panel: the history strip on the left (History %
+// of the width) shows the depth under the boat scrolling away; the boat is at the top left of the forward view, at the
+// dashed divider ("now"), and forward range grows to the right; depth down, both to the sonar's own depth x range.
+function draw () {
+  const pal = EchoColors.palette(parseInt(palSel.value, 10)).rgb
+  const bg = `rgb(${pal[0]},${pal[1]},${pal[2]})`
+  const ink = pal[0] + pal[1] + pal[2] > 382 ? '#000' : '#fff' // the palette's text colour
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H)
+  if (!last) return
+  const f = W / cv.clientWidth // device pixels per css pixel
+  const vs = pickSettings()
+  const maxX = Math.max(...recent.map(r => r.x), 1), maxY = Math.max(...recent.map(r => r.y), 1)
+  const xMax = vs ? vs.range : NICE.find(n => n >= maxX) || Math.ceil(maxX)
+  const yMax = vs ? vs.depth : Math.max(10, Math.ceil(maxY * 1.5))
+  const ox = Math.trunc(W * parseInt(histEl.value, 10) / 100)
+  const X = ft => ox + ft * (W - ox) / xMax, Y = ft => ft * H / yMax
+  const angle = vs ? vs.transducerAngle : 30
+
+  // the bottom ahead: the newest 50 depths under the boat lead from the boat to the first profile point, then the
+  // profile, then its last depth to the edge of the view
+  const first = last.points.length ? last.points[0][0] : 0
+  const lead = hist.slice(0, HIST_FORWARD).map((d, i) => [first * (1 - (i + 1) / HIST_FORWARD), d]).reverse()
+  const pts = [...lead, ...last.points]
+  if (!pts.length) return
+  if (pts[pts.length - 1][0] < xMax) pts.push([xMax, pts[pts.length - 1][1]])
+  const poly = pts.map(([x, y]) => [X(x), Y(y)])
+
+  // zones: a critical box (depth x range from the sonar's settings) and a caution box 1.5 times as big; where the
+  // bottom enters a box the fill turns yellow / red
+  const zones = zonesEl.checked && vs && vs.criticalDepth > 0
+  let cautionX = Infinity, criticalX = Infinity
+  if (zones) {
+    const enter = (d, r) => { const p = pts.find(([x, y]) => x <= r && y <= d); return p ? X(p[0]) : Infinity }
+    criticalX = enter(vs.criticalDepth, vs.criticalRange)
+    cautionX = enter(vs.criticalDepth * 1.5, vs.criticalRange * 1.5)
+  }
+  const mode = pointsSel.value
+  if (mode === '2') drawPoints(X, Y, xMax, yMax, angle, f) // Objects: the dots under the fill
+  fillBelow(poly, x => x >= criticalX ? 'critical' : x >= cautionX ? 'caution' : 'base')
+  if (mode === '1') drawPoints(X, Y, xMax, yMax, angle, f) // All: on top
+  strokePoly(poly, ink, 2 * f)
+  if (zones) {
+    for (const [k, color] of [[1.5, '#ffff00'], [1, '#fa0000']]) {
+      const d = Y(vs.criticalDepth * k), r = X(vs.criticalRange * k)
+      strokePoly([[ox, d], [r, d], [r, 0]], color, 3 * f, [3 * f, 3 * f])
+    }
+  }
+  // history strip: sample i at ox - i * ox / 350
+  if (ox > 0 && hist.length) {
+    const hp = hist.slice(0, HIST_STRIP).map((d, i) => [ox - i * ox / HIST_STRIP, Y(d)]).reverse()
+    fillBelow(hp, () => 'base')
+    strokePoly(hp, ink, 2 * f)
+  }
+  strokePoly([[ox + 0.5, 0], [ox + 0.5, H]], ink, f, [4 * f, 4 * f])
+  if (guideEl.checked) { // the sonar's guideline: from the boat to depth * 0.2034 ft ahead at the bottom of the view (whole feet)
+    const g = Math.trunc(yMax * 0.20336829)
+    strokePoly([[ox, 0], [ox + (W - ox) * g / xMax, H]], ink, 3 * f, [6 * f, 6 * f])
+  }
+
+  // scales: forward range along the top of the forward view, depth down its left edge
+  ctx.font = `${22 * f}px system-ui`; ctx.fillStyle = ink; ctx.textBaseline = 'top'
+  const u = unitName(), xMaxU = toUnit(xMax), yMaxU = toUnit(yMax)
+  const xs = tickStep(xMaxU, 6)
+  ctx.textAlign = 'center'
+  for (let v = xs; v <= xMaxU + 0.01; v += xs) { // the last one may sit on the right edge: keep it inside the view
+    const t = v + ' ' + u, w = ctx.measureText(t).width
+    ctx.fillText(t, Math.min(X(fromUnit(v)), W - w / 2 - 4 * f), 6 * f)
+  }
+  const ys = tickStep(yMaxU, 8)
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+  for (let v = ys; v < yMaxU; v += ys) ctx.fillText(v + ' ' + u, ox + 8 * f, Y(fromUnit(v)))
+  if (ox > 60 * f) { ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('Now', ox - 8 * f, 6 * f) }
+}
+
+// NOS Point data: each record at theta = transducer angle + angle, forward = r cos(theta), depth = r sin(theta),
+// only 0 < theta < 90 degrees, a 2x2 pixel dot coloured by row 93 of the echogram colour table (amplitudes up to 93 are
+// the background: not drawn). Dots are batched by colour to keep canvas state changes down.
+function drawPoints (X, Y, xMax, yMax, angleDeg, f) {
+  const row = EchoColors.colorRow(parseInt(palSel.value, 10), parseInt(colorEl.value, 10), 93)
+  const buckets = new Map()
+  for (const e of echoes) {
+    const dv = new DataView(e.buffer, e.byteOffset, e.byteLength)
+    for (let o = 0; o + 5 <= e.length; o += 5) {
+      const c = e[o + 4]
+      if (c <= 93) continue
+      const a = dv.getInt16(o, true)
+      if (c === 255 && a === 0) continue // padding
+      const th = (angleDeg + a / 512) * Math.PI / 180
+      if (!(th > 0 && th < Math.PI / 2)) continue
+      const r = dv.getUint16(o + 2, true) * RANGE_CELL_FT
+      const fwd = r * Math.cos(th), dep = r * Math.sin(th)
+      if (fwd > xMax || dep > yMax) continue
+      let b = buckets.get(row[c]); if (!b) buckets.set(row[c], b = [])
+      b.push(X(fwd), Y(dep))
+    }
+  }
+  const d = Math.max(2, Math.round(2 * f))
+  for (const [v, xy] of buckets) {
+    ctx.fillStyle = `rgb(${(v >> 11) << 3},${((v >> 5) & 63) << 2},${(v & 31) << 3})`
+    for (let i = 0; i < xy.length; i += 2) ctx.fillRect(xy[i] | 0, xy[i + 1] | 0, d, d)
+  }
+}
+
+// binary frame from the server (src/protocol.rs pack_frame), in feet:
+//   [0x02][0][4B src IPv4][u32 seq][f32 depth ft][u16 nPoints][u16 nEcho][nPoints x 2 f32 ft][nEcho x 5-byte records]
+function parseFrame (buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint8(0) !== 0x02) return null
+  const np = dv.getUint16(14, true), ne = dv.getUint16(16, true)
+  const points = []
+  for (let i = 0; i < np; i++) points.push([dv.getFloat32(20 + i * 8, true), dv.getFloat32(24 + i * 8, true)])
+  return {
+    address: [2, 3, 4, 5].map(i => dv.getUint8(i)).join('.'),
+    seq: dv.getUint32(6, true),
+    depth: dv.getFloat32(10, true),
+    points,
+    echo: new Uint8Array(buf, 20 + np * 8, ne * 5)
+  }
+}
+
+function onPing (m) {
+  if (filterAddr && m.address !== filterAddr) return
+  last = m
+  echoes.push(m.echo); if (echoes.length > DRAWN_PINGS) echoes.shift()
+  if (m.depth >= 2) { hist.unshift(m.depth); if (hist.length > HIST_STRIP) hist.pop() }
+  recent.push({ x: Math.max(0, ...m.points.map(p => p[0])), y: Math.max(m.depth, ...m.points.map(p => p[1])) })
+  if (recent.length > 30) recent.shift()
+  showDepth()
+  draw()
+}
+
+function updateSources (list) {
+  const cur = srcSel.value
+  srcSel.innerHTML = '<option value="">(any)</option>'
+  for (const s of list) {
+    if (!s.forwardScan) continue
+    const o = document.createElement('option')
+    o.value = s.address; o.textContent = `${s.name} — ${s.model}`
+    srcSel.appendChild(o)
+  }
+  srcSel.value = [...srcSel.options].some(o => o.value === cur) ? cur : ''
+  Bar.refresh(srcSel)
+  filterAddr = srcSel.value
+}
+srcSel.onchange = () => { filterAddr = srcSel.value; last = null; recent.length = 0; echoes.length = 0; hist.length = 0; depthEl.textContent = '--'; showSettings(); draw() }
+
+// --- the sonar's ForwardScan settings (UDP 10756), changeable unless started with --read-only ---
+const ctlEl = document.getElementById('ctl'), pauseEl = document.getElementById('pause')
+const depthSel = document.getElementById('cdepth'), rangeSel = document.getElementById('crange'), noiseSel = document.getElementById('cnoise')
+const pausedEl = document.getElementById('paused')
+const STEPS = { // the Depth and Forward choices, in the shown unit
+  m: { depth: [3, 5, 10, 15, 20, 30, 50], range: [10, 15, 20, 30, 50, 75, 100] },
+  ft: { depth: [10, 15, 30, 50, 75, 100, 150], range: [30, 50, 75, 100, 150, 250, 300] }
+}
+const fsSettings = {} // address -> settings
+function pickSettings () { return fsSettings[filterAddr] || (filterAddr ? null : Object.values(fsSettings)[0]) || null }
+// Set a control to what the sonar reports: only when something changed, and not while its list is open.
+function setSelect (sel, html, value, title) {
+  if (Bar.picking(sel)) return
+  if (html !== null && sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html }
+  if (sel.value !== value) sel.value = value
+  if (sel.title !== title) sel.title = title
+  Bar.refresh(sel)
+}
+function stepOptions (steps, cur) { // steps and cur in the shown unit
+  const vals = cur === undefined || steps.includes(cur) ? steps : [...steps, cur].sort((a, b) => a - b)
+  return '<option value="auto">Auto</option>' + vals.map(v => `<option value="${v}">${v} ${unitName()}</option>`).join('')
+}
+function showDepth () {
+  depthEl.textContent = last && last.depth > 0 ? toUnit(last.depth).toFixed(1) + ' ' + unitName() : '--'
+}
+function showSettings () {
+  const s = pickSettings()
+  if (!s) return
+  const d = r1(toUnit(s.depth)), r = r1(toUnit(s.range)), u = unitName(), steps = STEPS[unitsSel.value] || STEPS.m
+  const title = s.autoRange ? `auto: now ${d} ${u} deep, ${r} ${u} ahead` : ''
+  setSelect(depthSel, stepOptions(steps.depth, s.autoRange ? undefined : d), s.autoRange ? 'auto' : String(d), title)
+  setSelect(rangeSel, stepOptions(steps.range, s.autoRange ? undefined : r), s.autoRange ? 'auto' : String(r), title)
+  setSelect(noiseSel, null, s.autoNoiseRejection ? 'auto' : String(s.noiseRejection), '')
+  pauseEl.textContent = s.running ? 'Pause' : 'Run'; pauseEl.classList.toggle('paused', !s.running)
+  pausedEl.hidden = s.running; statusEl.hidden = !s.running
+}
+function sendControl (change) {
+  fetch(BASE + 'api/forwardscan', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+    body: JSON.stringify(Object.assign(filterAddr ? { source: filterAddr } : {}, change))
+  }).then(r => r.json().then(j => {
+    statusEl.textContent = j.ok ? 'sent ' + j.sent.join(', ') : (j.error || 'control failed')
+  })).catch(e => { statusEl.textContent = 'control failed: ' + e.message }) // the selectors follow the sonar's next broadcast (~2 s)
+}
+pauseEl.onclick = () => { const s = pickSettings(); if (s) sendControl({ paused: s.running }) }
+// the API takes feet
+depthSel.onchange = () => sendControl(depthSel.value === 'auto' ? { autoRange: true } : { depth: fromUnit(Number(depthSel.value)) })
+rangeSel.onchange = () => sendControl(rangeSel.value === 'auto' ? { autoRange: true } : { range: fromUnit(Number(rangeSel.value)) })
+unitsSel.addEventListener('input', () => { showDepth(); showSettings() })
+noiseSel.onchange = () => sendControl({ noiseRejection: noiseSel.value })
+
+const netEl = document.getElementById('net')
+// The network note is ok exactly when a settings change can reach the sonar (a 169.254 address on its
+// interface); without that the controls are greyed out.
+function setControllable (ok) {
+  ctlEl.classList.toggle('off', !ok); document.getElementById('ctloff').hidden = ok
+  for (const el of ctlEl.querySelectorAll('button, select')) el.disabled = !ok
+}
+let quiet = null
+let instance = null
+function connect () {
+  const ws = new WebSocket(wsUrl())
+  ws.binaryType = 'arraybuffer'
+  ws.onopen = () => { statusEl.textContent = 'connected, waiting for ForwardScan' }
+  ws.onclose = () => { statusEl.textContent = 'disconnected — retrying'; setTimeout(connect, 1500) }
+  ws.onmessage = (ev) => {
+    if (typeof ev.data !== 'string') {
+      const m = parseFrame(ev.data) // null for echogram frames (the sonar page's)
+      if (m) onForward(m)
+      return
+    }
+    const m = JSON.parse(ev.data)
+    if (m.type === 'sources') updateSources(m.sources)
+    else if (m.type === 'config') {
+      if (instance && m.instance !== instance) location.reload() // the server was restarted, maybe with a new page
+      instance = m.instance
+      ctlEl.hidden = document.getElementById('ctlh').hidden = !m.allowControl
+    }
+    else if (m.type === 'network') { netEl.textContent = m.text; netEl.classList.toggle('warn', !m.ok); setControllable(m.ok) }
+    else if (m.type === 'forwardscanSettings') { fsSettings[m.address] = m.settings; showSettings(); draw() }
+  }
+}
+function onForward (m) {
+  onPing(m); statusEl.textContent = ''
+  clearTimeout(quiet); quiet = setTimeout(() => { statusEl.textContent = 'no ForwardScan for a while' }, 5000)
+}
+Bar.init({ hratio: ' %' })
+resize(); connect()
+</script>
+</body>
+</html>

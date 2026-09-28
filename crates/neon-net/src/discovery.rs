@@ -1,5 +1,7 @@
-//! Finding the NEON chartplotters: they advertise their REST API over mDNS as `_neonapi._tcp` (port 8444),
-//! and `GET /api/v1/info` there tells model and serial number without authentication.
+//! Finding the chartplotters. NEON ones advertise their REST API over mDNS as `_neonapi._tcp` (port 8444),
+//! and `GET /api/v1/info` there tells model and serial number without authentication. The older NOS ones
+//! advertise their remote-control port as `_navico-mfd-rp._tcp` (6633), where a session tells model, name
+//! and screen (see [`crate::nos`]); they have no serial number there, so model and name make their id.
 //!
 //! Chartplotters are keyed by serial number. Every known one is probed again now and then; one that has not
 //! answered for [`OFFLINE_AFTER`] shows as offline, and is forgotten after [`FORGET_AFTER`]. Addresses can
@@ -13,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
-use crate::api;
+use crate::{api, nos};
 
 pub const SERVICE_TYPE: &str = "_neonapi._tcp.local.";
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
@@ -28,9 +30,11 @@ pub struct Plotter {
     pub os_version: String,
     /// The name the user gave it, when something told us (the chartplotters' own announcements)
     pub name: Option<String>,
-    /// Where its REST API and signalling socket answer.
+    /// Where its REST API and signalling socket answer (NEON), or its remote-control port (NOS).
     pub addr: SocketAddr,
     pub last_seen: Instant,
+    /// A NOS unit: what its remote-control port says.
+    pub nos: Option<nos::Info>,
 }
 
 impl Plotter {
@@ -50,6 +54,11 @@ pub struct PlotterView {
     pub name: String,
     pub address: String,
     pub online: bool,
+    /// "neon" or "nos"
+    pub kind: &'static str,
+    /// A NOS unit's keys
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<String>,
 }
 
 impl From<&Plotter> for PlotterView {
@@ -62,6 +71,12 @@ impl From<&Plotter> for PlotterView {
             name: p.name.clone().unwrap_or_else(|| p.model.clone()),
             address: p.addr.ip().to_string(),
             online: p.online(),
+            kind: if p.nos.is_some() { "nos" } else { "neon" },
+            keys: p
+                .nos
+                .iter()
+                .flat_map(|n| n.keys.iter().map(|(k, _)| k.clone()))
+                .collect(),
         }
     }
 }
@@ -90,7 +105,8 @@ impl Discovery {
         if mdns {
             match ServiceDaemon::new() {
                 Ok(daemon) => {
-                    tokio::spawn(d.clone().browse(daemon));
+                    tokio::spawn(d.clone().browse(daemon.clone(), SERVICE_TYPE));
+                    tokio::spawn(d.clone().browse(daemon, nos::SERVICE_TYPE));
                 }
                 Err(e) => log::warn!(
                     "mDNS unavailable, chartplotters will not be found by themselves: {e}"
@@ -145,11 +161,11 @@ impl Discovery {
         self.changed.subscribe()
     }
 
-    async fn browse(self, daemon: ServiceDaemon) {
-        let rx = match daemon.browse(SERVICE_TYPE) {
+    async fn browse(self, daemon: ServiceDaemon, service: &'static str) {
+        let rx = match daemon.browse(service) {
             Ok(rx) => rx,
             Err(e) => {
-                log::warn!("mDNS browse for {SERVICE_TYPE}: {e}");
+                log::warn!("mDNS browse for {service}: {e}");
                 return;
             }
         };
@@ -192,18 +208,41 @@ impl Discovery {
     }
 
     async fn probe(self, addr: SocketAddr) {
-        let Ok(info) = api::info(addr).await else {
-            return;
+        let info = if addr.port() == nos::PORT {
+            let Ok(n) = nos::info(addr).await else {
+                return;
+            };
+            Found {
+                serial: nos_id(&n),
+                model: n.model.clone(),
+                brand: n.brand().to_string(),
+                os_version: n.firmware.clone(),
+                name: Some(n.name.clone()).filter(|s| !s.is_empty()),
+                nos: Some(n),
+            }
+        } else {
+            let Ok(i) = api::info(addr).await else {
+                return;
+            };
+            Found {
+                serial: i.serial_number,
+                model: i.model,
+                brand: i.brand,
+                os_version: i.os_version,
+                name: None,
+                nos: None,
+            }
         };
-        if info.serial_number.is_empty() {
+        if info.serial.is_empty() {
             return;
         }
         let mut g = self.lock();
         let name = match addr.ip() {
             IpAddr::V4(ip) => g.names.get(&ip).cloned(),
             _ => None,
-        };
-        let changed = match g.plotters.get_mut(&info.serial_number) {
+        }
+        .or(info.name);
+        let changed = match g.plotters.get_mut(&info.serial) {
             Some(p) => {
                 // it answers on several addresses: keep the one we have while it answers there, but
                 // prefer a routable one over 169.254
@@ -221,25 +260,23 @@ impl Discovery {
                 if name.is_some() {
                     p.name = name;
                 }
-                switch || !was_online
+                let nos_changed = p.nos != info.nos;
+                p.nos = info.nos;
+                switch || !was_online || nos_changed
             }
             None => {
-                log::info!(
-                    "{} {} (serial {}) at {addr}",
-                    info.brand,
-                    info.model,
-                    info.serial_number
-                );
+                log::info!("{} {} ({}) at {addr}", info.brand, info.model, info.serial);
                 g.plotters.insert(
-                    info.serial_number.clone(),
+                    info.serial.clone(),
                     Plotter {
-                        serial: info.serial_number,
+                        serial: info.serial,
                         model: info.model,
                         brand: info.brand,
                         os_version: info.os_version,
                         name,
                         addr,
                         last_seen: Instant::now(),
+                        nos: info.nos,
                     },
                 );
                 true
@@ -250,6 +287,29 @@ impl Discovery {
             self.changed.send_replace(());
         }
     }
+}
+
+/// What a probe found.
+struct Found {
+    serial: String,
+    model: String,
+    brand: String,
+    os_version: String,
+    name: Option<String>,
+    nos: Option<nos::Info>,
+}
+
+/// A NOS unit's id in the list (it tells no serial number): "nos-" and its model and name.
+fn nos_id(n: &nos::Info) -> String {
+    let mut id = String::from("nos");
+    for part in [&n.model, &n.name] {
+        id.push('-');
+        id.extend(
+            part.chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }),
+        );
+    }
+    id
 }
 
 fn is_link_local(a: SocketAddr) -> bool {

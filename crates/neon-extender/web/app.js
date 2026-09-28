@@ -11,9 +11,9 @@ function plotterCard(p) {
   const brand = brands[p.brand] ?? p.brand
   const detail = [p.name !== p.model ? `${brand} ${p.model}` : brand, p.address, `v${p.osVersion}`].filter(Boolean)
   const s = encodeURIComponent(p.serial)
-  // waypoints and files need its password known, and it on
+  // waypoints and files need its password known, and it on; an older NOS unit has neither
   const actions =
-    p.online && p.hasPassword
+    p.online && p.hasPassword && p.kind !== 'nos'
       ? `<div class="actions">
       <a class="action" href="remote/api/plotters/${s}/export.gpx" download title="All its waypoints and routes">Waypoints &amp; routes (GPX)</a>
       <button class="action" type="button" data-send="${esc(p.serial)}" title="To its Download folder; or drop a file here">Send a file</button>

@@ -5,7 +5,9 @@ chartplotters (B&G Zeus / Simrad NSS / Lowrance, firmware 2.6.x):
 
 - **Remote screen.** It finds the chartplotters by itself. Pick one on its page to see its screen on a
   phone, tablet or laptop, and tap, drag and send keys to it. It uses the chartplotter's own screen
-  mirroring, so nothing is installed on the chartplotter.
+  mirroring, so nothing is installed on the chartplotter. The older NOS units (Zeus³, NSS evo3, HDS
+  Live, Vulcan and their siblings) work too, through the screen mirroring and remote control the
+  vendor's phone app uses.
 - **ForwardScan.** It shows a NOS sonar's ForwardScan on its page, and puts a ForwardScan tile on the
   chartplotters that opens it (this is [neon-forwardscan](crates/neon-forwardscan), built in).
 
@@ -22,6 +24,11 @@ It prints its address, for example `http://10.56.0.1:6022/`. Open that on a phon
 - The page lists the chartplotters it has found. Tap one. The first time you connect to a chartplotter
   it asks for **that chartplotter's WiFi password**, which can differ from unit to unit. It keeps the
   password, so after that one tap is enough, from any phone or tablet.
+- A NOS unit needs no password. The first time you control one, it asks on its own screen whether to
+  allow "NEON Extender": choose **Always**, and it does not ask again. (*Settings → Wireless → Remote
+  controllers* on the unit lists it, and can forget it.) Its screen shows only while no other app
+  watches it, such as the vendor's Link app: the unit makes a picture that a new viewer can start
+  from only when its stream starts.
 - **Add to Home Screen** (Safari's share menu, or Chrome's install menu) makes it a full-screen app
   with its own icon.
 
@@ -68,6 +75,8 @@ the environment (with systemd: in `/etc/default/navico-neon-extender`, see the u
 screens need a login, which a browser can remember (a cookie with a hash of the password, for 400 days;
 a new password logs everyone out). ForwardScan stays open: the chartplotters show it themselves. Without
 TLS the password crosses the network in the clear, so it keeps out the curious, not someone listening in.
+A NOS unit's screen has no protection of its own: anyone on the network can watch it, with this program or
+without, and control it once the unit allowed this program.
 Run it only on a network you trust, and only with chartplotters you own or may use.
 
 ## How it works
@@ -92,6 +101,22 @@ passes the signalling messages through unchanged. The video never passes through
 - **Pairing:** the `snap_id` sent must be the chartplotter's own (from `/api/v1/info`), or its
   signalling socket refuses the token.
 
+### NOS units
+
+```
+ browser ◄──WebRTC video + input channels──► navico-neon-extender ◄──RTSP :554──── NOS unit
+                                                    └──────────TCP :6633 input──────►
+```
+
+A NOS unit has no WebRTC, so the program plays the chartplotter's part itself and the page is the same
+one. It makes the WebRTC offer ([str0m](https://github.com/algesten/str0m)), and sends the unit's RTSP
+screen (`rtsp://<unit>:554/screenmirror`, H.264, no authentication; [retina](https://github.com/scottlamb/retina))
+as the video, re-packetized, not re-encoded. The page's taps, drags and keys become the unit's
+remote-control protocol on TCP 6633 (touch and key frames, after the unit allowed us). The units
+advertise that port over mDNS as `_navico-mfd-rp._tcp`, and a session there tells model, name, screen
+size and which keys they have. One RTSP stream per unit serves every page; it is started again when a
+page joins, because the unit's encoder makes a key frame only when a stream starts.
+
 The protocol notes and the original Node/TypeScript reference are in
 [navico-neon-remote](https://github.com/keesverruijt/navico-neon-remote).
 
@@ -99,8 +124,8 @@ The protocol notes and the original Node/TypeScript reference are in
 
 | Crate | |
 |---|---|
-| [`neon-net`](crates/neon-net) | discovery, trust-all TLS, the chartplotter's REST API and signalling socket, the password store |
-| [`neon-remote`](crates/neon-remote) | the signalling proxy and the remote screen page |
+| [`neon-net`](crates/neon-net) | discovery, trust-all TLS, the chartplotter's REST API and signalling socket, the password store, the NOS remote-control protocol |
+| [`neon-remote`](crates/neon-remote) | the signalling proxy, the NOS bridge (RTSP and 6633 to WebRTC), and the remote screen page |
 | [`neon-forwardscan`](crates/neon-forwardscan) | ForwardScan, also a program of its own (absorbed with `git subtree`, history kept) |
 | [`neon-extender`](crates/neon-extender) | the `navico-neon-extender` program: all of the above on one web server |
 

@@ -37,6 +37,7 @@ export class Session {
    * @param {Function} [o.onDeviceOffline]
    * @param {Function} [o.onPairingResponse]  (string)
    * @param {Function} [o.onDataChannel]      (RTCDataChannel) the chartplotter's own channels
+   * @param {Function} [o.onStatus]           (string) news from our server (a NOS unit's input)
    */
   constructor(o) {
     this.o = o
@@ -156,6 +157,9 @@ export class Session {
           .catch((err) => this.log('addIceCandidate failed', String(err)))
         break
       }
+      case 'status':
+        this.o.onStatus?.(JSON.parse(env.dataString ?? '""'))
+        break
       case 'pairing-response':
         this.o.onPairingResponse?.(env.dataString ?? '')
         break

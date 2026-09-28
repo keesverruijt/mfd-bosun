@@ -34,7 +34,7 @@
 <aside id="panel" hidden>
   <section>
     <h2>Keys</h2>
-    <!-- The Zeus SR's own keys (keypad, knob turned and pressed), then zoom and arrows. -->
+    <!-- The Zeus SR's own keys (keypad, knob turned and pressed), then zoom and arrows; a NOS unit's own. -->
     <div id="keypad">
       <button type="button" data-key="KEYCODE_HOME">Home</button>
       <button type="button" data-key="KEYCODE_MENU">Menu</button>
@@ -52,15 +52,15 @@
       <button type="button" data-key="KEYCODE_DPAD_DOWN" aria-label="Down">▼</button>
       <button type="button" data-key="KEYCODE_DPAD_RIGHT" aria-label="Right">▶</button>
     </div>
-    <p>With a keyboard, the keys work on the screen itself: arrows, Enter, Esc (back), Tab, Backspace, and typing
+    <p id="keyhelp">With a keyboard, the keys work on the screen itself: arrows, Enter, Esc (back), Tab, Backspace, and typing
       into the focused field. Enter is the knob press: on the on-screen keyboard it presses the highlighted key.</p>
   </section>
-  <section>
+  <section class="neon-only">
     <h2>Waypoints &amp; routes</h2>
     <p>All of this chartplotter's waypoints and routes, as a GPX file.</p>
     <a id="gpx" class="button plain" href="#" download>Download GPX</a>
   </section>
-  <section>
+  <section class="neon-only">
     <h2>Send a file</h2>
     <p>Goes to the chartplotter's Download folder. You can also drop a file on the screen.</p>
     <div class="row"><input id="file" type="file"><button id="sendfile" type="button">Send</button></div>
@@ -69,7 +69,7 @@
   </section>
   <section>
     <button id="reconnect" type="button" class="plain">Reconnect</button>
-    <button id="forget" type="button" class="plain danger">Forget password</button>
+    <button id="forget" type="button" class="plain danger neon-only">Forget password</button>
   </section>
   <section>
     <h2>Log</h2>

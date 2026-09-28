@@ -131,6 +131,7 @@ async fn main() {
     let discovery = Discovery::start(!args.no_mdns);
     for ip in &args.plotters {
         discovery.add_address(SocketAddr::new(*ip, neon_net::api::PORT));
+        discovery.add_address(SocketAddr::new(*ip, neon_net::nos::PORT));
     }
     let remote = Remote::new(
         discovery.clone(),
@@ -264,6 +265,7 @@ async fn follow_announcements(fs: neon_forwardscan::state::State, discovery: Dis
             if let Some(ip) = d.ip {
                 discovery.set_name(ip, &d.name);
                 discovery.add_address(SocketAddr::new(IpAddr::V4(ip), neon_net::api::PORT));
+                discovery.add_address(SocketAddr::new(IpAddr::V4(ip), neon_net::nos::PORT));
             }
         }
     }

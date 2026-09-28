@@ -6,6 +6,8 @@
 //! chartplotter's WiFi password, and the signalling socket, which wants an `Authorization: Bearer` header
 //! and trust-all TLS. It passes the signalling messages through unchanged.
 //!
+//! The older NOS units have no WebRTC: for them this side plays the chartplotter's part itself (see [`nos`]).
+//!
 //! Routes, all relative so the router can be nested:
 //!   GET    /                                -> the remote screen page (`?plotter=<serial>`)
 //!   GET    /api/plotters                    -> [{ serial, model, brand, osVersion, name, address, online, hasPassword }]
@@ -15,6 +17,7 @@
 //!   GET    /signal?plotter=<serial>&key=<n> -> WebSocket to the chartplotter's /ws/receiver/<n>
 
 mod gpx;
+mod nos;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -64,6 +67,10 @@ pub struct Remote {
     /// When the last signalling session to each chartplotter (by serial) closed: see [`SETTLE`].
     closed_at: Arc<Mutex<HashMap<String, Instant>>>,
     identity: Arc<(String, String)>,
+    /// NOS units' screens
+    feeds: nos::Feeds,
+    /// What NOS units know this program by
+    nos_mac: [u8; 6],
 }
 
 impl Remote {
@@ -80,6 +87,8 @@ impl Remote {
             tokens: Default::default(),
             closed_at: Default::default(),
             identity: Arc::new((email.to_string(), device_name.to_string())),
+            feeds: Default::default(),
+            nos_mac: nos::client_mac(&format!("{device_name}@{}", hostname())),
         }
     }
 
@@ -100,8 +109,10 @@ impl Remote {
         &self.discovery
     }
 
+    /// Whether the chartplotter's screen can be opened without asking for a password: a NOS unit needs none.
     pub fn has_password(&self, serial: &str) -> bool {
-        self.credentials.password(serial).is_some()
+        self.discovery.get(serial).is_some_and(|p| p.nos.is_some())
+            || self.credentials.password(serial).is_some()
     }
 
     fn cached_token(&self, serial: &str) -> Option<String> {
@@ -234,6 +245,12 @@ impl Remote {
     }
 
     async fn bridge(self, browser: WebSocket, serial: String, key: u64) {
+        if let Some(p) = self.discovery.get(&serial).filter(|p| p.nos.is_some()) {
+            if p.online() {
+                let name = self.identity.1.clone();
+                return nos::serve(self.feeds.clone(), browser, p, key, self.nos_mac, name).await;
+            }
+        }
         self.settle(&serial).await;
         let (mut to_browser, mut from_browser) = browser.split();
         let up = match self.open_upstream(&serial, key).await {
@@ -302,6 +319,17 @@ impl Remote {
             .insert(serial.clone(), Instant::now());
         log::info!("signalling for {serial} closed");
     }
+}
+
+/// This machine's name, for what a NOS unit knows this program by.
+fn hostname() -> String {
+    ["/proc/sys/kernel/hostname", "/etc/hostname"]
+        .iter()
+        .find_map(|f| std::fs::read_to_string(f).ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
 /// Close codes a server may send.

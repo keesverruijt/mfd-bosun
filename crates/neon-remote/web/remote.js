@@ -25,6 +25,14 @@ let session = null
 let retry = null
 let streaming = false
 let lostTimer = null
+// an older NOS unit: our server plays its part (no files, its own keys, drags end explicitly)
+let nos = false
+// what our server last said about it (a NOS unit waiting for the user to allow input)
+let note = null
+
+function connectedText() {
+  return note ? `connected — ${note}` : 'connected'
+}
 
 function log(...a) {
   const line = a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')
@@ -57,6 +65,7 @@ function toLogin() {
 }
 
 function teardown() {
+  note = null
   clearTimeout(retry)
   retry = null
   clearTimeout(lostTimer)
@@ -81,7 +90,7 @@ function connect() {
     onTrack: (e) => {
       video.srcObject = e.streams[0] ?? new MediaStream([e.track])
       streaming = true
-      setStatus('connected')
+      setStatus(connectedText())
       play()
     },
     onPcState: (s) => {
@@ -101,7 +110,7 @@ function connect() {
           }
         }, 8000)
       } else if (s === 'connected' && streaming) {
-        setStatus('connected')
+        setStatus(connectedText())
       }
     },
     onSignalOpen: () => setStatus('waiting for the chartplotter…', true),
@@ -109,6 +118,11 @@ function connect() {
       if (!streaming) setStatus('starting video…', true) // the track may already have come with the offer
     },
     onDeviceOffline: () => setStatus('chartplotter offline', !streaming),
+    onStatus: (s) => {
+      log(s)
+      note = s === 'connected' ? null : s
+      setStatus(streaming ? connectedText() : s, !streaming)
+    },
     onSignalClose: (e) => {
       if (session !== me) return
       if (e.code === CLOSE_PASSWORD) {
@@ -242,6 +256,8 @@ touch.addEventListener('pointermove', (ev) => {
   const c = open('drag')
   if (ev.buttons !== 1 || !c) return
   if (!dragged && Math.hypot(ev.clientX - downPos.x, ev.clientY - downPos.y) < TAP_SLOP_PX) return
+  // a NOS unit is told where the finger went down, or a quick swipe would be a tap where it ended
+  if (!dragged && nos) c.send(JSON.stringify(videoPoint({ clientX: downPos.x, clientY: downPos.y })))
   dragged = true
   c.send(JSON.stringify(videoPoint(ev)))
 })
@@ -249,6 +265,8 @@ function pointerEnd(ev) {
   if (!pointers.has(ev.pointerId)) return
   if (pinching) {
     if (pointers.size === 2) pinch('end', ...pointers.values())
+  } else if (dragged && nos) {
+    open('drag')?.send(JSON.stringify({ ...videoPoint(ev), end: true }))
   } else if (ev.type === 'pointerup' && !dragged) {
     const c = open('tap')
     const isLongPress = performance.now() - downAt > 500
@@ -412,11 +430,30 @@ function typeText(s) {
 }
 
 
-for (const b of document.querySelectorAll('#keypad [data-key]')) {
-  b.addEventListener('click', () => {
-    sendHardKey(b.dataset.key)
-    b.blur() // or Enter/Space would press it again
-  })
+$('keypad').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-key]')
+  if (!b) return
+  sendHardKey(b.dataset.key)
+  b.blur() // or Enter/Space would press it again
+})
+
+// A NOS unit's keys, as it lists them.
+const NOS_KEYS = {
+  page: 'Pages', menu: 'Menu', enter: 'Enter', cancel: 'Cancel', zoomin: '+', zoomout: '−', goto: 'Go to',
+  mark: 'Mark', waypoint: 'Waypoint', mob: 'MOB', user: 'User', power: 'Power',
+}
+
+function nosKeypad(keys) {
+  $('keypad').replaceChildren(
+    ...keys.map((k) => {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: NOS_KEYS[k] ?? k })
+      b.dataset.key = `NOS:${k}`
+      return b
+    }),
+  )
+  $('keyhelp').textContent = keys.length
+    ? 'The keys this chartplotter has. A pinch zooms with its zoom keys, when it has them.'
+    : 'This chartplotter has no keys to press from here.'
 }
 
 // A keyboard on the remote screen itself: keys as the chartplotter's, characters typed.
@@ -459,6 +496,7 @@ function fileStatus(text, progress) {
 }
 
 async function sendFile(f) {
+  if (nos) return
   if (!session) return fileStatus('Not connected.')
   if (sendingFile) return fileStatus('Still sending the last file.')
   if (f.size > FILE_WARN_BYTES && !confirm(`${f.name} is ${Math.round(f.size / 1048576)} MB. The chartplotter holds all of it in memory until it is in. Send it?`)) return
@@ -578,6 +616,11 @@ async function start() {
     setStatus('chartplotter not found — is it on?', true)
     setTimeout(start, 5000)
     return
+  }
+  nos = p.kind === 'nos'
+  if (nos) {
+    for (const e of document.querySelectorAll('.neon-only')) e.hidden = true
+    nosKeypad(p.keys ?? [])
   }
   $('name').textContent = p.name
   $('gpx').href = `api/plotters/${encodeURIComponent(serial)}/export.gpx`

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["vendor"]
 
 [workspace.package]
 edition = "2021"
@@ -13,3 +14,9 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# str0m's pure-Rust crypto still builds aws-lc (C, needs a libc for the target) for its DTLS certificate,
+# through dimpl's "rcgen" feature: this copy of dimpl makes that certificate with ring instead, which the
+# build has anyway. See vendor/README.md.
+[patch.crates-io]
+dimpl = { path = "vendor/dimpl" }

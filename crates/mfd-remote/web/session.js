@@ -8,6 +8,7 @@
 
 // close codes from our server (see mfd-remote's lib.rs)
 export const CLOSE_PASSWORD = 4001
+export const CLOSE_REFUSED = 4003
 export const CLOSE_UNKNOWN = 4004
 
 // The channels we open for the chartplotter.

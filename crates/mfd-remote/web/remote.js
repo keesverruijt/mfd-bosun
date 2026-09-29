@@ -7,13 +7,14 @@
 // Signalling envelope, both ways:  { command, clientKey?, dataString? }, dataString itself a JSON string:
 //   SDP: { type: "offer"|"answer", sdp }     ICE: { candidate, sdpMLineIndex, sdpMid, usernameFragment }
 
-import { Session, sendFile as sendFileTo, signalUrl, newClientKey, CLOSE_PASSWORD, CLOSE_UNKNOWN, FILE_WARN_BYTES } from './session.js'
+import { Session, sendFile as sendFileTo, signalUrl, newClientKey, CLOSE_PASSWORD, CLOSE_REFUSED, CLOSE_UNKNOWN, FILE_WARN_BYTES } from './session.js'
 
 const $ = (id) => document.getElementById(id)
 const video = $('video')
 const center = $('center')
 const touch = $('touch')
 const startBtn = $('start')
+const retryBtn = $('retry')
 const statusEl = $('status')
 const logEl = $('log')
 const panel = $('panel')
@@ -71,6 +72,7 @@ function teardown() {
   clearTimeout(lostTimer)
   lostTimer = null
   startBtn.hidden = true
+  retryBtn.hidden = true
   session?.close()
   session = null
   streaming = false
@@ -128,6 +130,11 @@ function connect() {
       if (e.code === CLOSE_PASSWORD) {
         teardown()
         askPassword(e.reason === 'password needed' ? '' : e.reason)
+      } else if (e.code === CLOSE_REFUSED) {
+        // it closes at once, every time: retrying on our own only burdens it
+        teardown()
+        setStatus(e.reason, true)
+        retryBtn.hidden = false
       } else if (e.code === CLOSE_UNKNOWN) {
         setStatus('chartplotter not found — is it on?', true)
         scheduleRetry()
@@ -208,6 +215,7 @@ function play() {
 }
 
 startBtn.addEventListener('click', play)
+retryBtn.addEventListener('click', connect)
 video.addEventListener('pause', () => streaming && play())
 
 // --- input -------------------------------------------------------------------------------------------

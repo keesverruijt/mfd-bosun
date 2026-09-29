@@ -47,6 +47,9 @@ pub mod close {
     pub const PASSWORD: u16 = 4001;
     /// Pairing failed for another reason.
     pub const PAIRING: u16 = 4002;
+    /// The chartplotter closed the session at the page's `receiver-online`, without a word: it will not
+    /// share its screen (a Zeus S on 2.5.208). Retrying does not help, so the page stops.
+    pub const REFUSED: u16 = 4003;
     /// No such chartplotter, or it does not answer.
     pub const UNKNOWN: u16 = 4004;
     pub const UPSTREAM: u16 = 1011;
@@ -267,10 +270,14 @@ impl Remote {
         };
         log::info!("signalling for {serial} open (receiver {key})");
         let (mut to_plotter, mut from_plotter) = up.split();
+        // whether the chartplotter said anything, and whether the page asked it for its screen
+        let (mut heard, mut asked) = (false, false);
         loop {
             tokio::select! {
                 m = from_plotter.next() => match m {
                     Some(Ok(UpMessage::Text(t))) => {
+                        heard = true;
+                        log::debug!("signalling for {serial}: from the chartplotter: {}", brief(t.as_str()));
                         if to_browser.send(Message::Text(t.as_str().into())).await.is_err() {
                             break;
                         }
@@ -285,8 +292,13 @@ impl Remote {
                             .map(|f| (u16::from(f.code), f.reason.to_string()))
                             .unwrap_or((1000, String::new()));
                         log::info!("signalling for {serial}: closed by the chartplotter ({code} {reason})");
-                        let code = if sendable(code) { code } else { close::UPSTREAM };
-                        let _ = to_browser.send(close_message(code, &reason)).await;
+                        let m = if asked && !heard && code == 1000 {
+                            log::info!("signalling for {serial}: the chartplotter refuses to share its screen");
+                            close_message(close::REFUSED, "the chartplotter refuses to share its screen")
+                        } else {
+                            close_message(if sendable(code) { code } else { close::UPSTREAM }, &reason)
+                        };
+                        let _ = to_browser.send(m).await;
                         break;
                     }
                     Some(Ok(_)) => {} // ping, pong: tungstenite answers them
@@ -302,6 +314,8 @@ impl Remote {
                 },
                 m = from_browser.next() => match m {
                     Some(Ok(Message::Text(t))) => {
+                        log::debug!("signalling for {serial}: from the page: {}", brief(t.as_str()));
+                        asked |= t.as_str().contains("\"receiver-online\"");
                         if to_plotter.send(UpMessage::Text(t.as_str().into())).await.is_err() {
                             break;
                         }
@@ -326,6 +340,14 @@ impl Remote {
 }
 
 /// This machine's name, for what a NOS unit knows this program by.
+/// A signalling message for the log: SDP and candidates run long.
+fn brief(t: &str) -> &str {
+    match t.char_indices().nth(300) {
+        Some((i, _)) => &t[..i],
+        None => t,
+    }
+}
+
 fn hostname() -> String {
     ["/proc/sys/kernel/hostname", "/etc/hostname"]
         .iter()

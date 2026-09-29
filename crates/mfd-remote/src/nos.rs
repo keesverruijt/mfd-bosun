@@ -18,6 +18,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use str0m::change::SdpAnswer;
@@ -40,7 +41,12 @@ struct Feed {
     frames: broadcast::Sender<Frame>,
     /// Start the stream again, for an IDR frame (when a page cannot start from what comes).
     restart: Notify,
+    /// Frames come on this RTSP session: until then, restarting it gains nothing.
+    flowing: AtomicBool,
 }
+
+/// How long a unit may take to answer for its screen (DESCRIBE, SETUP, PLAY).
+const RTSP_START_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The RTSP streams, one per unit (by serial) while anyone watches it.
 #[derive(Clone, Default)]
@@ -56,11 +62,18 @@ impl Feeds {
         let (frames, rx) = broadcast::channel(64);
         let feed = Arc::new(Feed {
             frames,
+            flowing: AtomicBool::new(false),
             restart: Notify::new(),
         });
         g.insert(serial.to_string(), feed.clone());
         tokio::spawn(self.clone().run(serial.to_string(), ip, feed));
         rx
+    }
+
+    fn flowing(&self, serial: &str) -> bool {
+        let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        g.get(serial)
+            .is_some_and(|f| f.flowing.load(Ordering::Relaxed))
     }
 
     fn restart(&self, serial: &str) {
@@ -92,6 +105,8 @@ impl Feeds {
                 r = stream(&url, &feed, || self.done(&serial, &feed)) => match r {
                     Ok(stop) => stop,
                     Err(e) => {
+                        // not when restarted for a key frame: frames come again in a moment
+                        feed.flowing.store(false, Ordering::Relaxed);
                         log::info!("screen of {serial}: {e}");
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         false
@@ -120,20 +135,27 @@ async fn stream(
         PlayOptions, Session, SessionOptions, SetupOptions, TcpTransportOptions, Transport,
     };
     use retina::codec::{CodecItem, FrameFormat};
-    let mut s = Session::describe(url::Url::parse(url)?, SessionOptions::default()).await?;
-    let video = s
-        .streams()
-        .iter()
-        .position(|s| s.media() == "video" && s.encoding_name() == "h264")
-        .ok_or("no H.264 video")?;
-    s.setup(
-        video,
-        SetupOptions::default()
-            .transport(Transport::Tcp(TcpTransportOptions::default()))
-            .frame_format(FrameFormat::SIMPLE),
-    )
-    .await?;
-    let mut d = s.play(PlayOptions::default()).await?.demuxed()?;
+    let start = async {
+        let mut s = Session::describe(url::Url::parse(url)?, SessionOptions::default()).await?;
+        let video = s
+            .streams()
+            .iter()
+            .position(|s| s.media() == "video" && s.encoding_name() == "h264")
+            .ok_or("no H.264 video")?;
+        s.setup(
+            video,
+            SetupOptions::default()
+                .transport(Transport::Tcp(TcpTransportOptions::default()))
+                .frame_format(FrameFormat::SIMPLE),
+        )
+        .await?;
+        let d = s.play(PlayOptions::default()).await?.demuxed()?;
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>((d, video))
+    };
+    // a unit whose RTSP server accepts the connection but never answers (seen on a Zeus3S)
+    let (mut d, video) = tokio::time::timeout(RTSP_START_TIMEOUT, start)
+        .await
+        .map_err(|_| format!("no answer in {} s", RTSP_START_TIMEOUT.as_secs()))??;
     let params_of = |d: &retina::client::Demuxed| -> Arc<[u8]> {
         match d.streams()[video].parameters() {
             Some(retina::codec::ParametersRef::Video(v)) => v.extra_data().into(),
@@ -149,6 +171,7 @@ async fn stream(
                     if f.has_new_parameters() {
                         params = params_of(&d);
                     }
+                    feed.flowing.store(true, Ordering::Relaxed);
                     let _ = feed.frames.send(Frame { data: f.into_data().into(), params: params.clone() });
                 }
                 Some(Ok(_)) => {}
@@ -468,9 +491,9 @@ pub async fn serve(
     let mut frames: Option<broadcast::Receiver<Frame>> = None;
     let mut starter = h264::Starter::default();
     let mut last_restart = Instant::now() - Duration::from_secs(10);
-    // since when we wait for a frame to start from, and whether the page was told why it waits
+    // since when we wait for a frame to start from, and what the page was told of why it waits
     let mut watching_since = Instant::now();
-    let mut told_shared = false;
+    let mut told: Option<&str> = None;
     let t0 = Instant::now();
     let mut pinch_start: Option<f64> = None;
     log::info!("screen session for {serial} (receiver {client_key})");
@@ -579,8 +602,7 @@ pub async fn serve(
                     let data = starter.frame(&f.data, &f.params);
                     if !was && starter.started() {
                         log::debug!("screen session for {serial}: started, {:.1} s after joining", watching_since.elapsed().as_secs_f32());
-                        if told_shared {
-                            told_shared = false;
+                        if told.take().is_some() {
                             let _ = to_browser.send(send("status", json!("connected"))).await;
                         }
                     }
@@ -662,21 +684,26 @@ pub async fn serve(
                 Some(Ok(_)) => {}
             },
         }
-        // A stream we cannot start from (one without whole pictures, or H.264 the starter does not
-        // know): start ours again now and then for an IDR frame, which comes only when nobody else watches
-        // (the vendor's app, for one), and say why the screen stays black.
+        // No picture yet, and say why the screen stays black. When frames come but none to start from
+        // (one without whole pictures, or H.264 the starter does not know), start ours again now and then
+        // for an IDR frame, which comes only when nobody else watches (the vendor's app, for one). When
+        // none come, the unit has not answered: restarting would only cut short its answer.
         if frames.is_some()
             && !starter.started()
             && watching_since.elapsed() > Duration::from_secs(4)
-            && last_restart.elapsed() > Duration::from_secs(5)
         {
-            last_restart = Instant::now();
-            feeds.restart(&serial);
-            if !told_shared {
-                told_shared = true;
-                let text =
-                    "no picture while another app watches this chartplotter's screen: close it";
-                if to_browser.send(send("status", json!(text))).await.is_err() {
+            let why = if feeds.flowing(&serial) {
+                if last_restart.elapsed() > Duration::from_secs(5) {
+                    last_restart = Instant::now();
+                    feeds.restart(&serial);
+                }
+                "no picture while another app watches this chartplotter's screen: close it"
+            } else {
+                "no picture: the chartplotter does not answer for its screen (RTSP, port 554)"
+            };
+            if told != Some(why) {
+                told = Some(why);
+                if to_browser.send(send("status", json!(why))).await.is_err() {
                     break;
                 }
             }

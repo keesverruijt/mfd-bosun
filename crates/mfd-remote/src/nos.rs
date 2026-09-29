@@ -43,6 +43,8 @@ struct Feed {
     restart: Notify,
     /// Frames come on this RTSP session: until then, restarting it gains nothing.
     flowing: AtomicBool,
+    /// The unit answered the last start of its stream (DESCRIBE, SETUP, PLAY), frames or not.
+    answered: AtomicBool,
 }
 
 /// How long a unit may take to answer for its screen (DESCRIBE, SETUP, PLAY).
@@ -63,6 +65,7 @@ impl Feeds {
         let feed = Arc::new(Feed {
             frames,
             flowing: AtomicBool::new(false),
+            answered: AtomicBool::new(false),
             restart: Notify::new(),
         });
         g.insert(serial.to_string(), feed.clone());
@@ -74,6 +77,12 @@ impl Feeds {
         let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
         g.get(serial)
             .is_some_and(|f| f.flowing.load(Ordering::Relaxed))
+    }
+
+    fn answered(&self, serial: &str) -> bool {
+        let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        g.get(serial)
+            .is_some_and(|f| f.answered.load(Ordering::Relaxed))
     }
 
     fn restart(&self, serial: &str) {
@@ -153,9 +162,11 @@ async fn stream(
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>((d, video))
     };
     // a unit whose RTSP server accepts the connection but never answers (seen on a Zeus3S)
-    let (mut d, video) = tokio::time::timeout(RTSP_START_TIMEOUT, start)
-        .await
-        .map_err(|_| format!("no answer in {} s", RTSP_START_TIMEOUT.as_secs()))??;
+    let started = tokio::time::timeout(RTSP_START_TIMEOUT, start).await;
+    feed.answered
+        .store(matches!(started, Ok(Ok(_))), Ordering::Relaxed);
+    let (mut d, video) =
+        started.map_err(|_| format!("no answer in {} s", RTSP_START_TIMEOUT.as_secs()))??;
     let params_of = |d: &retina::client::Demuxed| -> Arc<[u8]> {
         match d.streams()[video].parameters() {
             Some(retina::codec::ParametersRef::Video(v)) => v.extra_data().into(),
@@ -687,7 +698,8 @@ pub async fn serve(
         // No picture yet, and say why the screen stays black. When frames come but none to start from
         // (one without whole pictures, or H.264 the starter does not know), start ours again now and then
         // for an IDR frame, which comes only when nobody else watches (the vendor's app, for one). When
-        // none come, the unit has not answered: restarting would only cut short its answer.
+        // none come, the unit has not answered, or its stream fails before a frame: restarting would only
+        // cut short its answer.
         if frames.is_some()
             && !starter.started()
             && watching_since.elapsed() > Duration::from_secs(4)
@@ -698,6 +710,9 @@ pub async fn serve(
                     feeds.restart(&serial);
                 }
                 "no picture while another app watches this chartplotter's screen: close it"
+            } else if feeds.answered(&serial) {
+                // a stream that fails before its first frame (an SPS the RTSP client refuses, say)
+                "no picture: the chartplotter's screen stream fails (see the log)"
             } else {
                 "no picture: the chartplotter does not answer for its screen (RTSP, port 554)"
             };

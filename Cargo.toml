@@ -20,3 +20,4 @@ panic = "abort"
 # build has anyway. See vendor/README.md.
 [patch.crates-io]
 dimpl = { path = "vendor/dimpl" }
+h264-reader = { path = "vendor/h264-reader" }

@@ -17,6 +17,7 @@
 //!   GET    /api/plotters/{serial}/backup/{WaypointsRoutesTracks.usr|Settings.set} -> a NOS unit's own backups
 //!   GET    /signal?plotter=<serial>&key=<n> -> WebSocket to the chartplotter's /ws/receiver/<n>
 
+mod crypto;
 mod gpx;
 mod h264;
 mod nos;

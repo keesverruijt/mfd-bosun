@@ -665,6 +665,8 @@ dependencies = [
 [[package]]
 name = "dimpl"
 version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07d467d37bfdcc290bb8dcbedc8ca356eb730e46459b1687f98c3bae28aa6814"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -685,7 +687,6 @@ dependencies = [
  "pkcs8",
  "rand 0.9.5",
  "rand_core 0.6.4",
- "rcgen",
  "sec1",
  "sha2 0.10.9",
  "signature",
@@ -1464,17 +1465,27 @@ dependencies = [
 name = "mfd-remote"
 version = "0.1.0"
 dependencies = [
+ "aes",
+ "aes-gcm",
  "axum",
+ "ctr",
+ "dimpl",
  "futures-util",
+ "hmac",
  "if-addrs",
  "log",
  "mfd-net",
+ "rcgen",
  "retina",
  "ring",
  "rust-embed",
  "serde",
  "serde_json",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
  "str0m",
+ "str0m-proto",
+ "time",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "url",
@@ -2379,7 +2390,6 @@ dependencies = [
  "sctp-proto",
  "serde",
  "str0m-proto",
- "str0m-rust-crypto",
  "subtle",
  "time",
  "tracing",
@@ -2396,24 +2406,6 @@ dependencies = [
  "fastrand",
  "serde",
  "subtle",
- "time",
-]
-
-[[package]]
-name = "str0m-rust-crypto"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "947c2417bf43e47504911f92f47c22b6125a57d162e1661f1c77b78ebb3aa9d3"
-dependencies = [
- "aes",
- "aes-gcm",
- "ctr",
- "dimpl",
- "hmac",
- "p256",
- "sha1 0.10.7",
- "sha2 0.10.9",
- "str0m-proto",
  "time",
 ]
 

@@ -479,8 +479,8 @@ pub async fn serve(
     }
     drop(udp_tx);
 
-    str0m::crypto::from_feature_flags().install_process_default();
     let mut rtc = Rtc::builder()
+        .set_crypto_provider(Arc::new(crate::crypto::provider()))
         .set_ice_lite(true)
         .clear_codecs()
         .enable_h264(true)

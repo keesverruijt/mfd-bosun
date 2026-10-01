@@ -107,8 +107,8 @@ passes the signalling messages through unchanged. The video never passes through
 
 - **Discovery:** the chartplotters advertise their API over mDNS as `_neonapi._tcp` (port 8444), and
   `GET /api/v1/info` there gives their model and serial number without authentication. Their
-  ForwardScan announcements (UDP 239.2.1.1:2052) give their names, and find them when mDNS does not
-  get through.
+  ForwardScan announcements (UDP 239.2.1.1:2052) give their names. mDNS must get through: only
+  `--plotter` finds a chartplotter without it.
 - **TLS:** ALPN must be `http/1.1` only: offered h2, the chartplotter hangs up.
 - **Pairing:** the `snap_id` sent must be the chartplotter's own (from `/api/v1/info`), or its
   signalling socket refuses the token.

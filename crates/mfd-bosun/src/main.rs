@@ -256,7 +256,9 @@ fn serves(listen: &[IpAddr], a: IpAddr) -> bool {
 }
 
 /// The chartplotters announce themselves (for ForwardScan) with their name and address: that names them in
-/// the list, and finds them when mDNS does not.
+/// the list. It does not find them: an announcement does not tell NEON (8444) from NOS (6633), and other
+/// devices announce themselves too, so probing both ports of each only filled the log with refusals. mDNS
+/// finds them, on the port of the service each advertises.
 async fn follow_announcements(fs: neon_forwardscan::state::State, discovery: Discovery) {
     let mut tick = tokio::time::interval(Duration::from_secs(5));
     loop {
@@ -265,8 +267,6 @@ async fn follow_announcements(fs: neon_forwardscan::state::State, discovery: Dis
         for d in devices {
             if let Some(ip) = d.ip {
                 discovery.set_name(ip, &d.name);
-                discovery.add_address(SocketAddr::new(IpAddr::V4(ip), mfd_net::api::PORT));
-                discovery.add_address(SocketAddr::new(IpAddr::V4(ip), mfd_net::nos::PORT));
             }
         }
     }

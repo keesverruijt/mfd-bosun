@@ -287,8 +287,8 @@ impl Discovery {
         }
     }
 
-    /// Every address is probed again every [`PROBE_INTERVAL`], and a chartplotter's other port (8444 or
-    /// 6633) never answers: so log why only when that changes.
+    /// Every address is probed again every [`PROBE_INTERVAL`], and one given by hand on both ports, of which
+    /// one never answers: so log why only when that changes.
     fn probe_failed(&self, addr: SocketAddr, why: String) {
         if self.lock().failing.insert(addr, why.clone()).as_ref() != Some(&why) {
             log::debug!("no chartplotter at {addr}: {why}");

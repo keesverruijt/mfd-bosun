@@ -98,21 +98,19 @@ pub struct Discovery {
 }
 
 impl Discovery {
-    /// Starts browsing mDNS (when `mdns`) and probing. Needs a Tokio runtime.
-    pub fn start(mdns: bool) -> Self {
+    /// Starts browsing mDNS and probing. Needs a Tokio runtime.
+    pub fn start() -> Self {
         let d = Discovery {
             inner: Default::default(),
             changed: watch::channel(()).0,
         };
-        if mdns {
-            match ServiceDaemon::new() {
-                Ok(daemon) => {
-                    tokio::spawn(d.clone().browse(daemon.clone(), SERVICE_TYPE));
-                    tokio::spawn(d.clone().browse(daemon, nos::SERVICE_TYPE));
-                }
-                Err(e) => log::warn!(
-                    "mDNS unavailable, chartplotters will not be found by themselves: {e}"
-                ),
+        match ServiceDaemon::new() {
+            Ok(daemon) => {
+                tokio::spawn(d.clone().browse(daemon.clone(), SERVICE_TYPE));
+                tokio::spawn(d.clone().browse(daemon, nos::SERVICE_TYPE));
+            }
+            Err(e) => {
+                log::warn!("mDNS unavailable, chartplotters will not be found by themselves: {e}")
             }
         }
         tokio::spawn(d.clone().probe_all());
@@ -232,6 +230,9 @@ impl Discovery {
         let info = match found {
             Ok(f) if !f.serial.is_empty() => f,
             Ok(_) => return self.probe_failed(addr, "no serial number".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                return self.probe_failed(addr, "no answer".into())
+            }
             Err(e) => return self.probe_failed(addr, e.to_string()),
         };
         let mut g = self.lock();
@@ -291,7 +292,12 @@ impl Discovery {
     /// one never answers: so log why only when that changes.
     fn probe_failed(&self, addr: SocketAddr, why: String) {
         if self.lock().failing.insert(addr, why.clone()).as_ref() != Some(&why) {
-            log::debug!("no chartplotter at {addr}: {why}");
+            let what = if addr.port() == nos::PORT {
+                "NOS remote control"
+            } else {
+                "NEON screen sharing"
+            };
+            log::debug!("{what} connection to {addr}: {why}");
         }
     }
 }

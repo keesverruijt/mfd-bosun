@@ -44,7 +44,6 @@ Options (`--help` shows all):
 | `--listen IP,…` | addresses to serve the pages on; also `MFD_BOSUN_LISTEN` (default `::`: all, IPv6 and IPv4; `0.0.0.0`: IPv4 only) |
 | `--password TEXT` | a password for the remote screens; also `MFD_BOSUN_PASSWORD` (default: none) |
 | `--plotter IP` | a chartplotter's address, when it is not found by itself; repeatable |
-| `--no-mdns` | do not look for chartplotters with mDNS |
 | `--no-forwardscan` | no ForwardScan |
 | `-i, --interface NAME` | the interface the sonar is on, when it cannot tell by itself |
 | `--no-link-local` | never add a 169.254 address (changing the sonar's settings needs one) |

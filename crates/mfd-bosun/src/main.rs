@@ -57,9 +57,6 @@ struct Args {
     /// A chartplotter's address, for when it is not found by itself (mDNS); may be given more than once
     #[arg(long = "plotter", value_name = "IP")]
     plotters: Vec<IpAddr>,
-    /// Do not look for chartplotters with mDNS
-    #[arg(long)]
-    no_mdns: bool,
     /// No ForwardScan
     #[arg(long)]
     no_forwardscan: bool,
@@ -129,7 +126,7 @@ async fn main() {
         }
     }
 
-    let discovery = Discovery::start(!args.no_mdns);
+    let discovery = Discovery::start();
     for ip in &args.plotters {
         discovery.add_address(SocketAddr::new(*ip, mfd_net::api::PORT));
         discovery.add_address(SocketAddr::new(*ip, mfd_net::nos::PORT));

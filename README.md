@@ -106,8 +106,9 @@ passes the signalling messages through unchanged. The video never passes through
 
 - **Discovery:** the chartplotters advertise their API over mDNS as `_neonapi._tcp` (port 8444), and
   `GET /api/v1/info` there gives their model and serial number without authentication. Their
-  ForwardScan announcements (UDP 239.2.1.1:2052) give their names. mDNS must get through: only
-  `--plotter` finds a chartplotter without it.
+  ForwardScan announcements (UDP 239.2.1.1:2052) give their names, and a NOS unit's
+  remote-control port too (see below). For a NEON unit mDNS must get through: only `--plotter` finds
+  one without it.
 - **TLS:** ALPN must be `http/1.1` only: offered h2, the chartplotter hangs up.
 - **Pairing:** the `snap_id` sent must be the chartplotter's own (from `/api/v1/info`), or its
   signalling socket refuses the token.
@@ -124,7 +125,8 @@ one. It makes the WebRTC offer ([str0m](https://github.com/algesten/str0m)), and
 screen (`rtsp://<unit>:554/screenmirror`, H.264, no authentication; [retina](https://github.com/scottlamb/retina))
 as the video, re-packetized, not re-encoded. The page's taps, drags and keys become the unit's
 remote-control protocol on TCP 6633 (touch and key frames, after the unit allowed us). The units
-advertise that port over mDNS as `_navico-mfd-rp._tcp`, and a session there tells model, name, screen
+advertise that port over mDNS as `_navico-mfd-rp._tcp`, or else (a Zeus3S on 26.1) list it as
+`navico-mfd-rp` in the `Services` of their ForwardScan announcement, and a session there tells model, name, screen
 size and which keys they have. One RTSP stream per unit serves every page. The unit's encoder makes an
 IDR frame only when its stream starts, and a browser starts decoding only at one; so for a page that
 joins later, the program turns the next whole picture the unit sends (about once a second, an ordinary

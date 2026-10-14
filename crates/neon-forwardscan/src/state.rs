@@ -25,6 +25,9 @@ pub struct Device {
     pub name: String,
     pub model: String,
     pub ip: Option<Ipv4Addr>,
+    /// The port of its remote control (`navico-mfd-rp` in its `Services`): a NOS unit's 6633. A NEON one
+    /// does not list it.
+    pub remote_port: Option<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]

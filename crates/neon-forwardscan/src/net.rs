@@ -125,7 +125,7 @@ pub async fn receive_announcements(state: State, sock: UdpSocket) -> std::io::Re
                 let ip = |k: &str| v.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<Ipv4Addr>().ok());
                 let Some(ll) = ip("IP_Zeroconfig") else { continue };
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-                let d = Device { name: s("Name"), model: s("Model"), ip: ip("IP") };
+                let d = Device { name: s("Name"), model: s("Model"), ip: ip("IP"), remote_port: remote_port(&v) };
                 let new = state.lock().devices.insert(ll, d.clone()).is_none();
                 if new {
                     log::info!("{} \"{}\" at {} / {ll}", d.model, d.name, d.ip.map(|a| a.to_string()).unwrap_or_default());
@@ -134,6 +134,18 @@ pub async fn receive_announcements(state: State, sock: UdpSocket) -> std::io::Re
             }
         }
     }
+}
+
+/// The port an announcement lists for `navico-mfd-rp`, the remote control of a NOS unit.
+fn remote_port(v: &serde_json::Value) -> Option<u16> {
+    v.get("Services")?
+        .as_array()?
+        .iter()
+        .find(|s| s.get("Service").and_then(|x| x.as_str()) == Some("navico-mfd-rp"))?
+        .get("Port")?
+        .as_u64()?
+        .try_into()
+        .ok()
 }
 
 pub struct NetOptions {
@@ -385,6 +397,23 @@ mod tests {
                 .collect(),
             lan: true,
         }
+    }
+
+    #[test]
+    fn remote_port_from_services() {
+        // a Zeus3S (NOS, 26.1), which does not advertise navico-mfd-rp over mDNS
+        let nos: serde_json::Value = serde_json::from_str(
+            r#"{"DeviceType":"MFD","Model":"Zeus3S 9","Name":"NAVPOD","IP":"10.40.2.26","Services":[{"Port":10110,"Service":"NMEA0183","Version":"1"},{"Port":554,"Service":"rtsp","Version":"1"},{"Port":6633,"Service":"navico-mfd-rp","Version":"1"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(remote_port(&nos), Some(6633));
+        // a Zeus S (NEON, 2.5.208)
+        let neon: serde_json::Value = serde_json::from_str(
+            r#"{"DeviceType":"NEON_MFD","Model":"Zeus S 9","Services":[{"Port":10110,"Service":"nmea-0183","Version":"1"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(remote_port(&neon), None);
+        assert_eq!(remote_port(&serde_json::json!({"Model":"Sonar Hub"})), None);
     }
 
     #[test]

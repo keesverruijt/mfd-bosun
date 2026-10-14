@@ -20,7 +20,7 @@ pub struct Info {
     pub os_version: String,
     pub language: String,
     /// The chartplotter's own snap_id: pairing must use it (see [`pair`]). `null` on a unit that has none
-    /// (a Zeus S, 2.5.208): then that is what pairing sends.
+    /// (a Zeus S, 2.5.208): then pairing sends `""`.
     pub snap_id: Option<String>,
 }
 
@@ -67,7 +67,8 @@ pub struct Identity<'a> {
 /// JWT) for its signalling socket.
 ///
 /// The `snap_id` sent is the chartplotter's own: it has a stored account, and its signalling socket rejects
-/// a token whose `sub` is not that account's snap_id.
+/// a token whose `sub` is not that account's snap_id. A unit without one (snap_id `null`) refuses `null` and a
+/// missing field (HTTP 500, "Failed to convert request body"), and takes `""`: its token's `sub` is then `""`.
 pub async fn pair(
     addr: SocketAddr,
     password: &str,
@@ -78,8 +79,7 @@ pub async fn pair(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(format!("viewer:{password}"))
     );
-    let body =
-        json!({ "snap_id": info.snap_id, "email": who.email, "device_name": who.device_name });
+    let body = json!({ "snap_id": info.snap_id.unwrap_or_default(), "email": who.email, "device_name": who.device_name });
     let r = http::request(
         addr,
         Method::POST,

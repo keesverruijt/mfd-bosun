@@ -182,9 +182,10 @@ impl LinkKeeper {
         };
         let Some(sonar) = sonar else {
             if self.started.elapsed() > Duration::from_secs(20) {
-                let mut text = "No ForwardScan from a sonar yet. Start ForwardScan on the sonar, and check that this \
+                let mut text =
+                    "No Sonar detected yet. Start ForwardScan on the sonar, and check that this \
                     computer is on the boat's Ethernet."
-                    .to_string();
+                        .to_string();
                 if is_wsl() {
                     text += " On WSL2 use mirrored networking (see the README): the default NAT network does not pass the broadcasts.";
                 }

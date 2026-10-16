@@ -132,7 +132,7 @@ async function refresh() {
   $('fs').hidden = !st.forwardScan
   $('sonars').innerHTML = sources.length
     ? sources.map(sonarCard).join('')
-    : '<li class="empty">No ForwardScan seen yet. Start ForwardScan on the sonar.</li>'
+    : '<li class="empty">No Sonar detected yet. Start ForwardScan on the sonar.</li>'
   $('version').textContent = `mfd-bosun ${st.version}`
 }
 

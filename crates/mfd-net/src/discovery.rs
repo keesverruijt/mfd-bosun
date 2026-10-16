@@ -190,14 +190,10 @@ impl Discovery {
                 let mut addrs: Vec<Ipv4Addr> = s.get_addresses_v4().into_iter().collect();
                 addrs.sort_by_key(|a| (a.is_link_local(), *a));
                 log::debug!("mDNS: {} at {addrs:?}:{}", s.fullname, s.port);
-                // Garmin advertises its HTTP port, but we identify and control it over the control port.
-                let port = if service == garmin::SERVICE_TYPE {
-                    garmin::CONTROL_PORT
-                } else {
-                    s.port
-                };
+                // The Garmin `_garmin-helm._tcp` SRV already points at the control port, as the others
+                // point at their service's port.
                 for a in addrs {
-                    self.add_address(SocketAddr::new(IpAddr::V4(a), port));
+                    self.add_address(SocketAddr::new(IpAddr::V4(a), s.port));
                 }
             }
         }
@@ -239,14 +235,18 @@ impl Discovery {
                 screen: Some(Screen::Navico(n)),
             })
         } else if addr.port() == garmin::CONTROL_PORT {
-            garmin::info(addr).await.map(|g| Found {
-                serial: format!("garmin-{}", g.serial),
-                model: g.model.clone(),
-                brand: g.brand().to_string(),
-                os_version: String::new(),
-                name: Some(g.name.clone()).filter(|s| !s.is_empty()),
-                screen: Some(Screen::Garmin(g)),
-            })
+            match garmin::info(addr).await {
+                Ok(g) => Ok(Found {
+                    serial: format!("garmin-{}", g.serial),
+                    model: g.model.clone(),
+                    brand: g.brand().to_string(),
+                    // the firmware version lives on the plotter's HTTP app API, not the control port
+                    os_version: garmin::build_version(addr.ip()).await.unwrap_or_default(),
+                    name: Some(g.name.clone()).filter(|s| !s.is_empty()),
+                    screen: Some(Screen::Garmin(g)),
+                }),
+                Err(e) => Err(e),
+            }
         } else {
             api::info(addr).await.map(|i| Found {
                 serial: i.serial_number,

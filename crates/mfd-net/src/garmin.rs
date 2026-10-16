@@ -27,8 +27,12 @@
 //!
 //! The enumerate replies also carry the plotter's identity: key `0x0b` is the model string (e.g.
 //! "GPSMAP 723xsv") and key `0x00` is a `\r\n`-separated list of the screen's own RTSP URLs, native
-//! resolution first (`rtsp://<host>:554/helm_1024x600.h264`). The plotter also announces itself over mDNS as
-//! `_garmin-mrn-card._tcp` (port 80) and serves an app API on HTTP (`/garmin/inventory/device/`).
+//! resolution first (`rtsp://<host>:554/helm_1024x600.h264`).
+//!
+//! Discovery: the plotter advertises the remote screen over mDNS as `_garmin-helm._tcp`, whose SRV record
+//! points straight at the control port ([`SERVICE_TYPE`], [`CONTROL_PORT`]). It also serves an app API over
+//! plain HTTP on :80 (`/garmin/cards/`, `/garmin/inventory/device/`, and `/garmin/build/`, whose page gives
+//! the firmware version — see [`build_version`]).
 
 use crate::screen::Phase;
 use std::net::{IpAddr, SocketAddr};
@@ -41,7 +45,8 @@ use tokio::sync::watch;
 pub const RTSP_PORT: u16 = 554;
 pub const CONTROL_PORT: u16 = 51200;
 pub const HTTP_PORT: u16 = 80;
-pub const SERVICE_TYPE: &str = "_garmin-mrn-card._tcp.local.";
+/// The mDNS service for the remote screen; its SRV record points at [`CONTROL_PORT`].
+pub const SERVICE_TYPE: &str = "_garmin-helm._tcp.local.";
 
 /// Pointer coordinates are normalized across the screen to this range (0..=`COORD_MAX`).
 pub const COORD_MAX: u32 = 65535;
@@ -117,6 +122,25 @@ pub async fn info(addr: SocketAddr) -> std::io::Result<Info> {
         width,
         height,
     })
+}
+
+/// The plotter's firmware version from its `/garmin/build/` page on HTTP :80 (e.g. "42.05"), best effort —
+/// `None` if the page does not answer or has no version line.
+pub async fn build_version(ip: IpAddr) -> Option<String> {
+    let addr = SocketAddr::new(ip, HTTP_PORT);
+    let r = crate::http::get(addr, "/garmin/build/").await.ok()?;
+    parse_build_version(&r.text())
+}
+
+/// The version from a `/garmin/build/` page: the text after "System Version:" up to the next tag.
+fn parse_build_version(html: &str) -> Option<String> {
+    let after = html.split_once("System Version:")?.1;
+    let v = after
+        .split('<')
+        .next()?
+        .trim()
+        .trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+    (!v.is_empty()).then(|| v.to_string())
 }
 
 /// The host and resolution of the first `helm_<W>x<H>.h264` RTSP URL in a `\r\n`-separated list.
@@ -363,6 +387,13 @@ mod tests {
         assert_eq!(parse_helm_url(&urls), Some((host.to_string(), 1024, 600)));
         assert_eq!(host_id(host), "3529725371");
         assert_eq!(host_id("plotter.local"), "plotter");
+    }
+
+    #[test]
+    fn parses_the_firmware_version_from_build_page() {
+        let html = "<h2>\"Garmin x3xsv\" - garmin-j6-sailfish-3529725371<h2>\n<h2>System Version: 42.05<h2>";
+        assert_eq!(parse_build_version(html).as_deref(), Some("42.05"));
+        assert_eq!(parse_build_version("<h2>no version here</h2>"), None);
     }
 
     #[test]

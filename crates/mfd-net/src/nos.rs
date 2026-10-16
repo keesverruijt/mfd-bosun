@@ -96,6 +96,16 @@ pub enum Touch {
     Up = 2,
 }
 
+impl From<crate::screen::Phase> for Touch {
+    fn from(p: crate::screen::Phase) -> Touch {
+        match p {
+            crate::screen::Phase::Down => Touch::Down,
+            crate::screen::Phase::Move => Touch::Move,
+            crate::screen::Phase::Up => Touch::Up,
+        }
+    }
+}
+
 fn frame(cmd: u16, payload: &[u8]) -> Vec<u8> {
     let mut f = Vec::with_capacity(4 + payload.len());
     f.extend_from_slice(&(2 + payload.len() as u16).to_be_bytes());
@@ -236,13 +246,8 @@ pub async fn fetch(ip: std::net::IpAddr, path: &str) -> std::io::Result<Vec<u8>>
     Ok(d[body..].to_vec())
 }
 
-/// Whether input is allowed, as the unit says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Access {
-    Allowed,
-    /// The user has to allow it on the unit's screen.
-    Waiting,
-}
+/// Whether input is allowed, as the unit says. Shared with the other vendors (see [`crate::screen`]).
+pub use crate::screen::Access;
 
 /// A connection that sends input.
 pub struct Control {
@@ -303,6 +308,27 @@ impl Control {
         p[..4].copy_from_slice(&code.to_be_bytes());
         p[4..].copy_from_slice(&(down as u32).to_be_bytes());
         self.w.write_all(&frame(KEY, &p)).await
+    }
+
+    /// A pointer at normalized (`fx`, `fy`) in 0.0..=1.0, mapped to the unit's pixels (see [`crate::screen`]).
+    pub async fn pointer(
+        &mut self,
+        fx: f64,
+        fy: f64,
+        phase: crate::screen::Phase,
+    ) -> std::io::Result<()> {
+        let (w, h) = (self.info.width.max(1), self.info.height.max(1));
+        let x = (fx.clamp(0.0, 1.0) * (w - 1) as f64).round() as u16;
+        let y = (fy.clamp(0.0, 1.0) * (h - 1) as f64).round() as u16;
+        self.touch(x, y, phase.into()).await
+    }
+
+    /// A hardkey by name; one the unit does not have is ignored.
+    pub async fn key_named(&mut self, name: &str, down: bool) -> std::io::Result<()> {
+        match self.info.key(name) {
+            Some(code) => self.key(code, down).await,
+            None => Ok(()),
+        }
     }
 }
 

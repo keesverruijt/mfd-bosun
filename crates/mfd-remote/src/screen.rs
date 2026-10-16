@@ -13,7 +13,7 @@ use crate::h264;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use mfd_net::discovery::Plotter;
-use mfd_net::nos::{self, Access, Control, Touch};
+use mfd_net::screen::{Access, Client, Control, Phase, RtspTransport, Screen};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -56,7 +56,7 @@ pub struct Feeds(Arc<Mutex<HashMap<String, Arc<Feed>>>>);
 
 impl Feeds {
     /// The unit's frames, from now on.
-    fn watch(&self, serial: &str, ip: IpAddr) -> broadcast::Receiver<Frame> {
+    fn watch(&self, serial: &str, url: String, transport: RtspTransport) -> broadcast::Receiver<Frame> {
         let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(f) = g.get(serial) {
             return f.frames.subscribe();
@@ -69,7 +69,7 @@ impl Feeds {
             restart: Notify::new(),
         });
         g.insert(serial.to_string(), feed.clone());
-        tokio::spawn(self.clone().run(serial.to_string(), ip, feed));
+        tokio::spawn(self.clone().run(serial.to_string(), url, transport, feed));
         rx
     }
 
@@ -103,15 +103,11 @@ impl Feeds {
         true
     }
 
-    async fn run(self, serial: String, ip: IpAddr, feed: Arc<Feed>) {
-        let url = format!(
-            "rtsp://{}/screenmirror",
-            SocketAddr::new(ip, nos::RTSP_PORT)
-        );
+    async fn run(self, serial: String, url: String, transport: RtspTransport, feed: Arc<Feed>) {
         log::info!("screen of {serial}: {url}");
         loop {
             let stop = tokio::select! {
-                r = stream(&url, &feed, || self.done(&serial, &feed)) => match r {
+                r = stream(&url, transport, &feed, || self.done(&serial, &feed)) => match r {
                     Ok(stop) => stop,
                     Err(e) => {
                         // not when restarted for a key frame: frames come again in a moment
@@ -137,13 +133,19 @@ impl Feeds {
 /// One RTSP session, until it fails or `done()` (then Ok(true)).
 async fn stream(
     url: &str,
+    transport: RtspTransport,
     feed: &Feed,
     done: impl Fn() -> bool,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     use retina::client::{
         PlayOptions, Session, SessionOptions, SetupOptions, TcpTransportOptions, Transport,
+        UdpTransportOptions,
     };
     use retina::codec::{CodecItem, FrameFormat};
+    let transport = match transport {
+        RtspTransport::Tcp => Transport::Tcp(TcpTransportOptions::default()),
+        RtspTransport::Udp => Transport::Udp(UdpTransportOptions::default()),
+    };
     let start = async {
         let mut s = Session::describe(url::Url::parse(url)?, SessionOptions::default()).await?;
         let video = s
@@ -154,7 +156,7 @@ async fn stream(
         s.setup(
             video,
             SetupOptions::default()
-                .transport(Transport::Tcp(TcpTransportOptions::default()))
+                .transport(transport.clone())
                 .frame_format(FrameFormat::SIMPLE),
         )
         .await?;
@@ -225,24 +227,22 @@ struct Pinch {
 }
 
 enum In {
-    Tap(u16, u16, bool),
-    Drag(u16, u16, bool),
+    Tap(f64, f64, bool),
+    Drag(f64, f64, bool),
     Key(String),
 }
 
-/// From a point in the page's <video> box (the picture letterboxed in it) to the unit's pixels.
-fn to_screen(p: &Point, w: u16, h: u16) -> (u16, u16) {
+/// From a point in the page's <video> box (the picture letterboxed in it) to a fraction (0..=1) of the
+/// picture, which each vendor maps to its own coordinate space (see [`mfd_net::screen`]).
+fn to_frac(p: &Point, w: u16, h: u16) -> (f64, f64) {
     let (w, h) = (w.max(1) as f64, h.max(1) as f64);
     let scale = (p.client_width / w).min(p.client_height / h);
     if scale <= 0.0 {
-        return (0, 0);
+        return (0.0, 0.0);
     }
     let x = (p.x - (p.client_width - w * scale) / 2.0) / scale;
     let y = (p.y - (p.client_height - h * scale) / 2.0) / scale;
-    (
-        x.clamp(0.0, w - 1.0).round() as u16,
-        y.clamp(0.0, h - 1.0).round() as u16,
-    )
+    ((x / w).clamp(0.0, 1.0), (y / h).clamp(0.0, 1.0))
 }
 
 /// The page's keys (Android key names, as for a NEON chartplotter; "NOS:<name>" for the unit's own) as the
@@ -275,22 +275,23 @@ pub fn client_mac(seed: &str) -> [u8; 6] {
     m
 }
 
-/// Talks to the unit's remote-control port: the page's input as touches and keys.
+/// Talks to the plotter's remote-control port: the page's input as pointer events and keys.
 async fn control(
-    addr: SocketAddr,
-    mac: [u8; 6],
-    name: String,
+    screen: Screen,
+    ip: IpAddr,
+    client: Client,
     mut input: mpsc::Receiver<In>,
     status: mpsc::Sender<String>,
 ) {
+    let name = client.name.clone();
     let say = |s: &str| {
         let _ = status.try_send(s.to_string());
     };
     let mut c = loop {
-        match Control::connect(addr, mac, &name).await {
+        match screen.connect(ip, &client).await {
             Ok(c) => break c,
             Err(e) => {
-                log::info!("remote control of {addr}: {e}");
+                log::info!("remote control of {ip}: {e}");
                 say("input: the chartplotter does not answer, trying again…");
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(5)) => {}
@@ -299,15 +300,11 @@ async fn control(
             }
         }
     };
-    log::info!(
-        "remote control of {} ({addr}): {}×{}",
-        c.info.model,
-        c.info.width,
-        c.info.height
-    );
-    let mut access = c.access.clone();
-    // a drag in progress: where the finger is, and when the page last moved it
-    let mut drag: Option<(u16, u16, Instant)> = None;
+    let (w, h) = screen.size();
+    log::info!("remote control of {} ({ip}): {w}×{h}", screen.model());
+    let mut access = c.access();
+    // a drag in progress: where the finger is (fraction), and when the page last moved it
+    let mut drag: Option<(f64, f64, Instant)> = None;
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     let mut waiting_said = false;
     // a device the unit does not know yet gets no answer at all until the user allows it on the unit
@@ -350,54 +347,52 @@ async fn control(
                 let (x, y, at) = drag.unwrap();
                 if at.elapsed() > Duration::from_secs(3) {
                     drag = None;
-                    c.touch(x, y, Touch::Up).await
+                    c.pointer(x, y, Phase::Up).await
                 } else {
-                    c.touch(x, y, Touch::Move).await
+                    c.pointer(x, y, Phase::Move).await
                 }
             }
         };
         if let Err(e) = r {
-            log::info!("remote control of {addr}: {e}");
+            log::info!("remote control of {ip}: {e}");
             say("input: the connection to the chartplotter broke");
             break;
         }
     }
 }
 
-/// The most a drag moves between two touches sent to the unit, in its pixels.
-const DRAG_STEP_PX: f64 = 12.0;
+/// The most a drag moves between two pointer events, as a fraction of the screen (about 12 px on an 800-wide
+/// unit); a jump larger than this is sent in steps, as a finger is seen moving, or it is taken for a tap.
+const DRAG_STEP: f64 = 0.015;
 
 async fn handle(
     c: &mut Control,
-    drag: &mut Option<(u16, u16, Instant)>,
+    drag: &mut Option<(f64, f64, Instant)>,
     m: In,
 ) -> std::io::Result<()> {
     match m {
         In::Tap(x, y, long) => {
             if let Some((dx, dy, _)) = drag.take() {
-                c.touch(dx, dy, Touch::Up).await?;
+                c.pointer(dx, dy, Phase::Up).await?;
             }
-            c.touch(x, y, Touch::Down).await?;
+            c.pointer(x, y, Phase::Down).await?;
             let hold = Duration::from_millis(if long { 900 } else { 60 });
             let t0 = Instant::now();
             while t0.elapsed() < hold {
                 tokio::time::sleep(Duration::from_millis(30)).await;
-                c.touch(x, y, Touch::Move).await?;
+                c.pointer(x, y, Phase::Move).await?;
             }
-            c.touch(x, y, Touch::Up).await
+            c.pointer(x, y, Phase::Up).await
         }
         In::Drag(x, y, end) => {
             match *drag {
-                None => c.touch(x, y, Touch::Down).await?,
-                // a jump goes in steps, as a finger is seen moving, or the unit takes it for a tap
+                None => c.pointer(x, y, Phase::Down).await?,
                 Some((x0, y0, _)) => {
-                    let (dx, dy) = (x as f64 - x0 as f64, y as f64 - y0 as f64);
-                    let steps = (dx.hypot(dy) / DRAG_STEP_PX).ceil().max(1.0) as u32;
+                    let (dx, dy) = (x - x0, y - y0);
+                    let steps = (dx.hypot(dy) / DRAG_STEP).ceil().max(1.0) as u32;
                     for i in 1..=steps {
                         let f = i as f64 / steps as f64;
-                        let (sx, sy) = (x0 as f64 + dx * f, y0 as f64 + dy * f);
-                        c.touch(sx.round() as u16, sy.round() as u16, Touch::Move)
-                            .await?;
+                        c.pointer(x0 + dx * f, y0 + dy * f, Phase::Move).await?;
                         if i < steps {
                             tokio::time::sleep(Duration::from_millis(8)).await;
                         }
@@ -406,20 +401,16 @@ async fn handle(
             }
             if end {
                 *drag = None;
-                c.touch(x, y, Touch::Up).await
+                c.pointer(x, y, Phase::Up).await
             } else {
                 *drag = Some((x, y, Instant::now()));
                 Ok(())
             }
         }
         In::Key(name) => {
-            let Some(code) = c.info.key(&name) else {
-                log::debug!("no {name} key on {}", c.info.model);
-                return Ok(());
-            };
-            c.key(code, true).await?;
+            c.key(&name, true).await?;
             tokio::time::sleep(Duration::from_millis(60)).await;
-            c.key(code, false).await
+            c.key(&name, false).await
         }
     }
 }
@@ -446,7 +437,8 @@ pub async fn serve(
     mac: [u8; 6],
     device_name: String,
 ) {
-    let Some(info) = p.nos.clone() else { return };
+    let Some(screen) = p.screen.clone() else { return };
+    let (w, h) = screen.size();
     let serial = p.serial.clone();
     let (mut to_browser, mut from_browser) = browser.split();
     let send = |command: &str, data: serde_json::Value| {
@@ -493,7 +485,13 @@ pub async fn serve(
 
     let (in_tx, in_rx) = mpsc::channel::<In>(64);
     let (status_tx, mut status_rx) = mpsc::channel::<String>(8);
-    tokio::spawn(control(p.addr, mac, device_name, in_rx, status_tx));
+    tokio::spawn(control(
+        screen.clone(),
+        p.addr.ip(),
+        Client { name: device_name, mac },
+        in_rx,
+        status_tx,
+    ));
 
     let mut pending = None;
     let mut mid: Option<Mid> = None;
@@ -529,7 +527,11 @@ pub async fn serve(
                     }
                     Event::Connected => {
                         log::info!("screen session for {serial}: connected");
-                        frames = Some(feeds.watch(&serial, p.addr.ip()));
+                        frames = Some(feeds.watch(
+                            &serial,
+                            screen.rtsp_url(p.addr.ip()),
+                            screen.rtsp_transport(),
+                        ));
                         watching_since = Instant::now();
                         starter.resync();
                     }
@@ -540,11 +542,11 @@ pub async fn serve(
                         let label = channels.get(&d.id).map(String::as_str).unwrap_or("");
                         let m = match label {
                             "tap" => serde_json::from_slice::<Point>(&d.data).ok().map(|q| {
-                                let (x, y) = to_screen(&q, info.width, info.height);
+                                let (x, y) = to_frac(&q, w, h);
                                 In::Tap(x, y, q.is_long_press)
                             }),
                             "drag" => serde_json::from_slice::<Point>(&d.data).ok().map(|q| {
-                                let (x, y) = to_screen(&q, info.width, info.height);
+                                let (x, y) = to_frac(&q, w, h);
                                 In::Drag(x, y, q.end)
                             }),
                             "hardkey" => serde_json::from_slice::<serde_json::Value>(&d.data)
@@ -736,7 +738,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_the_letterboxed_picture_to_pixels() {
+    fn maps_the_letterboxed_picture_to_a_fraction() {
         let p = |x, y| Point {
             x,
             y,
@@ -746,9 +748,10 @@ mod tests {
             end: false,
         };
         // 800×480 in a 1000×1000 box: scale 1.25, 200 px bars above and below
-        assert_eq!(to_screen(&p(500.0, 500.0), 800, 480), (400, 240));
-        assert_eq!(to_screen(&p(0.0, 200.0), 800, 480), (0, 0));
-        assert_eq!(to_screen(&p(1000.0, 0.0), 800, 480), (799, 0));
+        let (fx, fy) = to_frac(&p(500.0, 500.0), 800, 480);
+        assert!((fx - 0.5).abs() < 1e-9 && (fy - 0.5).abs() < 1e-9);
+        assert_eq!(to_frac(&p(0.0, 200.0), 800, 480), (0.0, 0.0));
+        assert_eq!(to_frac(&p(1000.0, 0.0), 800, 480), (1.0, 0.0));
     }
 
     #[test]

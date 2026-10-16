@@ -6,7 +6,8 @@
 //! chartplotter's WiFi password, and the signalling socket, which wants an `Authorization: Bearer` header
 //! and trust-all TLS. It passes the signalling messages through unchanged.
 //!
-//! The older NOS units have no WebRTC: for them this side plays the chartplotter's part itself (see [`nos`]).
+//! The older NOS units and Garmin plotters have no browser-side WebRTC: for them this side plays the
+//! chartplotter's part itself (see [`screen`], which drives each vendor through [`mfd_net::screen`]).
 //!
 //! Routes, all relative so the router can be nested:
 //!   GET    /                                -> the remote screen page (`?plotter=<serial>`)
@@ -20,7 +21,7 @@
 mod crypto;
 mod gpx;
 mod h264;
-mod nos;
+mod screen;
 mod usr;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -75,7 +76,7 @@ pub struct Remote {
     closed_at: Arc<Mutex<HashMap<String, Instant>>>,
     identity: Arc<(String, String)>,
     /// NOS units' screens
-    feeds: nos::Feeds,
+    feeds: screen::Feeds,
     /// What NOS units know this program by
     nos_mac: [u8; 6],
 }
@@ -95,7 +96,7 @@ impl Remote {
             closed_at: Default::default(),
             identity: Arc::new((email.to_string(), device_name.to_string())),
             feeds: Default::default(),
-            nos_mac: nos::client_mac(&format!("{device_name}@{}", hostname())),
+            nos_mac: screen::client_mac(&format!("{device_name}@{}", hostname())),
         }
     }
 
@@ -119,7 +120,7 @@ impl Remote {
 
     /// Whether the chartplotter's screen can be opened without asking for a password: a NOS unit needs none.
     pub fn has_password(&self, serial: &str) -> bool {
-        self.discovery.get(serial).is_some_and(|p| p.nos.is_some())
+        self.discovery.get(serial).is_some_and(|p| p.screen.is_some())
             || self.credentials.password(serial).is_some()
     }
 
@@ -253,10 +254,10 @@ impl Remote {
     }
 
     async fn bridge(self, browser: WebSocket, serial: String, key: u64) {
-        if let Some(p) = self.discovery.get(&serial).filter(|p| p.nos.is_some()) {
+        if let Some(p) = self.discovery.get(&serial).filter(|p| p.screen.is_some()) {
             if p.online() {
                 let name = self.identity.1.clone();
-                return nos::serve(self.feeds.clone(), browser, p, key, self.nos_mac, name).await;
+                return screen::serve(self.feeds.clone(), browser, p, key, self.nos_mac, name).await;
             }
         }
         self.settle(&serial).await;
@@ -445,7 +446,18 @@ async fn forget_password(State(r): State<Remote>, Path(serial): Path<String>) ->
 }
 
 async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Response {
-    let (p, waypoints, routes, tracks) = match r.discovery.get(&serial).filter(|p| p.nos.is_some())
+    if let Some(p) = r.discovery.get(&serial) {
+        if matches!(&p.screen, Some(mfd_net::screen::Screen::Garmin(_))) {
+            return fail(
+                StatusCode::NOT_IMPLEMENTED,
+                "this chartplotter's waypoints cannot be exported",
+            );
+        }
+    }
+    let (p, waypoints, routes, tracks) = match r
+        .discovery
+        .get(&serial)
+        .filter(|p| matches!(&p.screen, Some(mfd_net::screen::Screen::Navico(_))))
     {
         // a NOS unit: its own backup, read
         Some(p) => {
@@ -505,7 +517,11 @@ async fn nos_backup(
         "Settings.set" => mfd_net::nos::SETTINGS,
         _ => return fail(StatusCode::NOT_FOUND, "no such backup"),
     };
-    let Some(p) = r.discovery.get(&serial).filter(|p| p.nos.is_some()) else {
+    let Some(p) = r
+        .discovery
+        .get(&serial)
+        .filter(|p| matches!(&p.screen, Some(mfd_net::screen::Screen::Navico(_))))
+    else {
         return fail(StatusCode::NOT_FOUND, format!("no NOS unit {serial}"));
     };
     match mfd_net::nos::fetch(p.addr.ip(), path).await {

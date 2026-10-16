@@ -130,6 +130,7 @@ async fn main() {
     for ip in &args.plotters {
         discovery.add_address(SocketAddr::new(*ip, mfd_net::api::PORT));
         discovery.add_address(SocketAddr::new(*ip, mfd_net::nos::PORT));
+        discovery.add_address(SocketAddr::new(*ip, mfd_net::garmin::CONTROL_PORT));
     }
     let remote = Remote::new(
         discovery.clone(),

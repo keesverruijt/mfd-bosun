@@ -5,7 +5,9 @@
 pub mod api;
 pub mod credentials;
 pub mod discovery;
+pub mod garmin;
 pub mod http;
 pub mod nos;
+pub mod screen;
 pub mod tls;
 pub mod ws;

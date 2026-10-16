@@ -21,10 +21,12 @@ function plotterCard(p) {
       <a class="action" href="remote/api/plotters/${s}/backup/Settings.set" download title="Its settings, as the vendor's app backs them up">Settings (.set)</a>
     </div>`
   } else if (p.online && p.hasPassword) {
-    actions = `<div class="actions">${gpx}
-      <button class="action" type="button" data-send="${esc(p.serial)}" title="To its Download folder; or drop a file here">Send a file</button>
-      <span class="upload" id="up-${esc(p.serial)}">${esc(uploads[p.serial]?.text ?? '')}</span>
-    </div>`
+    const sendFile = p.files
+      ? `<button class="action" type="button" data-send="${esc(p.serial)}" title="To its Download folder; or drop a file here">Send a file</button>
+      <span class="upload" id="up-${esc(p.serial)}">${esc(uploads[p.serial]?.text ?? '')}</span>`
+      : ''
+    const items = [p.waypoints ? gpx : '', sendFile].filter(Boolean).join('\n      ')
+    if (items) actions = `<div class="actions">${items}</div>`
   }
   return `<li class="plotter${p.online ? '' : ' offline'}" data-serial="${esc(p.serial)}">
     <a class="card" href="remote/?plotter=${s}">

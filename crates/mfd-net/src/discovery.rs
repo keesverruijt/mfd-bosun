@@ -2,6 +2,8 @@
 //! and `GET /api/v1/info` there tells model and serial number without authentication. The older NOS ones
 //! advertise their remote-control port as `_navico-mfd-rp._tcp` (6633), where a session tells model, name
 //! and screen (see [`crate::nos`]); they have no serial number there, so model and name make their id.
+//! Garmin ones advertise `_garmin-mrn-card._tcp`; a session on their control port tells model and screen
+//! resolution and carries a stable id in the RTSP hostname (see [`crate::garmin`]).
 //!
 //! Chartplotters are keyed by serial number. Every known one is probed again now and then; one that has not
 //! answered for [`OFFLINE_AFTER`] shows as offline, and is forgotten after [`FORGET_AFTER`]. Addresses can
@@ -15,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
-use crate::{api, nos};
+use crate::{api, garmin, nos, screen::Screen};
 
 pub const SERVICE_TYPE: &str = "_neonapi._tcp.local.";
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
@@ -33,8 +35,9 @@ pub struct Plotter {
     /// Where its REST API and signalling socket answer (NEON), or its remote-control port (NOS).
     pub addr: SocketAddr,
     pub last_seen: Instant,
-    /// A NOS unit: what its remote-control port says.
-    pub nos: Option<nos::Info>,
+    /// A remote-screen plotter (NOS or Garmin): what its probe learned. `None` for a NEON unit, whose
+    /// browser does the WebRTC itself.
+    pub screen: Option<Screen>,
 }
 
 impl Plotter {
@@ -54,8 +57,13 @@ pub struct PlotterView {
     pub name: String,
     pub address: String,
     pub online: bool,
-    /// "neon" or "nos"
+    /// "neon", "nos" or "garmin"
     pub kind: &'static str,
+    /// Its waypoints and routes can be exported as GPX (NEON over its REST API, NOS from its own backup;
+    /// not Garmin, whose waypoint protocol we do not speak).
+    pub waypoints: bool,
+    /// A file can be sent to it from the browser (NEON only; NOS and Garmin take none).
+    pub files: bool,
     /// A NOS unit's keys
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<String>,
@@ -63,6 +71,14 @@ pub struct PlotterView {
 
 impl From<&Plotter> for PlotterView {
     fn from(p: &Plotter) -> Self {
+        // What each kind can do beyond its screen: NEON (no `screen`) has the REST waypoint API and takes
+        // file drops; NOS gives its waypoints as its own backup but takes no files; Garmin, so far, is
+        // screen and input only.
+        let (waypoints, files) = match &p.screen {
+            None => (true, true),
+            Some(Screen::Navico(_)) => (true, false),
+            Some(Screen::Garmin(_)) => (false, false),
+        };
         PlotterView {
             serial: p.serial.clone(),
             model: p.model.clone(),
@@ -71,12 +87,10 @@ impl From<&Plotter> for PlotterView {
             name: p.name.clone().unwrap_or_else(|| p.model.clone()),
             address: p.addr.ip().to_string(),
             online: p.online(),
-            kind: if p.nos.is_some() { "nos" } else { "neon" },
-            keys: p
-                .nos
-                .iter()
-                .flat_map(|n| n.keys.iter().map(|(k, _)| k.clone()))
-                .collect(),
+            kind: p.screen.as_ref().map(|s| s.kind()).unwrap_or("neon"),
+            waypoints,
+            files,
+            keys: p.screen.as_ref().map(Screen::keys).unwrap_or_default(),
         }
     }
 }
@@ -107,7 +121,8 @@ impl Discovery {
         match ServiceDaemon::new() {
             Ok(daemon) => {
                 tokio::spawn(d.clone().browse(daemon.clone(), SERVICE_TYPE));
-                tokio::spawn(d.clone().browse(daemon, nos::SERVICE_TYPE));
+                tokio::spawn(d.clone().browse(daemon.clone(), nos::SERVICE_TYPE));
+                tokio::spawn(d.clone().browse(daemon, garmin::SERVICE_TYPE));
             }
             Err(e) => {
                 log::warn!("mDNS unavailable, chartplotters will not be found by themselves: {e}")
@@ -175,8 +190,14 @@ impl Discovery {
                 let mut addrs: Vec<Ipv4Addr> = s.get_addresses_v4().into_iter().collect();
                 addrs.sort_by_key(|a| (a.is_link_local(), *a));
                 log::debug!("mDNS: {} at {addrs:?}:{}", s.fullname, s.port);
+                // Garmin advertises its HTTP port, but we identify and control it over the control port.
+                let port = if service == garmin::SERVICE_TYPE {
+                    garmin::CONTROL_PORT
+                } else {
+                    s.port
+                };
                 for a in addrs {
-                    self.add_address(SocketAddr::new(IpAddr::V4(a), s.port));
+                    self.add_address(SocketAddr::new(IpAddr::V4(a), port));
                 }
             }
         }
@@ -215,7 +236,16 @@ impl Discovery {
                 brand: n.brand().to_string(),
                 os_version: n.firmware.clone(),
                 name: Some(n.name.clone()).filter(|s| !s.is_empty()),
-                nos: Some(n),
+                screen: Some(Screen::Navico(n)),
+            })
+        } else if addr.port() == garmin::CONTROL_PORT {
+            garmin::info(addr).await.map(|g| Found {
+                serial: format!("garmin-{}", g.serial),
+                model: g.model.clone(),
+                brand: g.brand().to_string(),
+                os_version: String::new(),
+                name: Some(g.name.clone()).filter(|s| !s.is_empty()),
+                screen: Some(Screen::Garmin(g)),
             })
         } else {
             api::info(addr).await.map(|i| Found {
@@ -224,7 +254,7 @@ impl Discovery {
                 brand: i.brand,
                 os_version: i.os_version,
                 name: None,
-                nos: None,
+                screen: None,
             })
         };
         let info = match found {
@@ -260,9 +290,9 @@ impl Discovery {
                 if name.is_some() {
                     p.name = name;
                 }
-                let nos_changed = p.nos != info.nos;
-                p.nos = info.nos;
-                switch || !was_online || nos_changed
+                let screen_changed = p.screen != info.screen;
+                p.screen = info.screen;
+                switch || !was_online || screen_changed
             }
             None => {
                 log::info!("{} {} ({}) at {addr}", info.brand, info.model, info.serial);
@@ -276,7 +306,7 @@ impl Discovery {
                         name,
                         addr,
                         last_seen: Instant::now(),
-                        nos: info.nos,
+                        screen: info.screen,
                     },
                 );
                 true
@@ -294,6 +324,8 @@ impl Discovery {
         if self.lock().failing.insert(addr, why.clone()).as_ref() != Some(&why) {
             let what = if addr.port() == nos::PORT {
                 "NOS remote control"
+            } else if addr.port() == garmin::CONTROL_PORT {
+                "Garmin Helm"
             } else {
                 "NEON screen sharing"
             };
@@ -309,7 +341,7 @@ struct Found {
     brand: String,
     os_version: String,
     name: Option<String>,
-    nos: Option<nos::Info>,
+    screen: Option<Screen>,
 }
 
 /// A NOS unit's id in the list (it tells no serial number): "nos-" and its model and name.

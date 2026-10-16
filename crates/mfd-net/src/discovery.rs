@@ -59,8 +59,8 @@ pub struct PlotterView {
     pub online: bool,
     /// "neon", "nos" or "garmin"
     pub kind: &'static str,
-    /// Its waypoints and routes can be exported as GPX (NEON over its REST API, NOS from its own backup;
-    /// not Garmin, whose waypoint protocol we do not speak).
+    /// Its waypoints and routes can be exported as GPX (NEON over its REST API, NOS from its own backup,
+    /// Garmin off its user-data bus).
     pub waypoints: bool,
     /// A file can be sent to it from the browser (NEON only; NOS and Garmin take none).
     pub files: bool,
@@ -72,12 +72,12 @@ pub struct PlotterView {
 impl From<&Plotter> for PlotterView {
     fn from(p: &Plotter) -> Self {
         // What each kind can do beyond its screen: NEON (no `screen`) has the REST waypoint API and takes
-        // file drops; NOS gives its waypoints as its own backup but takes no files; Garmin, so far, is
-        // screen and input only.
+        // file drops; NOS gives its waypoints as its own backup but takes no files; Garmin gives its
+        // waypoints and routes off its user-data bus but takes no files.
         let (waypoints, files) = match &p.screen {
             None => (true, true),
             Some(Screen::Navico(_)) => (true, false),
-            Some(Screen::Garmin(_)) => (false, false),
+            Some(Screen::Garmin(_)) => (true, false),
         };
         PlotterView {
             serial: p.serial.clone(),

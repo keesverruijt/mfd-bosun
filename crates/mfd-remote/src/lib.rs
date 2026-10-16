@@ -120,7 +120,9 @@ impl Remote {
 
     /// Whether the chartplotter's screen can be opened without asking for a password: a NOS unit needs none.
     pub fn has_password(&self, serial: &str) -> bool {
-        self.discovery.get(serial).is_some_and(|p| p.screen.is_some())
+        self.discovery
+            .get(serial)
+            .is_some_and(|p| p.screen.is_some())
             || self.credentials.password(serial).is_some()
     }
 
@@ -257,7 +259,8 @@ impl Remote {
         if let Some(p) = self.discovery.get(&serial).filter(|p| p.screen.is_some()) {
             if p.online() {
                 let name = self.identity.1.clone();
-                return screen::serve(self.feeds.clone(), browser, p, key, self.nos_mac, name).await;
+                return screen::serve(self.feeds.clone(), browser, p, key, self.nos_mac, name)
+                    .await;
             }
         }
         self.settle(&serial).await;
@@ -446,13 +449,16 @@ async fn forget_password(State(r): State<Remote>, Path(serial): Path<String>) ->
 }
 
 async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Response {
-    if let Some(p) = r.discovery.get(&serial) {
-        if matches!(&p.screen, Some(mfd_net::screen::Screen::Garmin(_))) {
-            return fail(
-                StatusCode::NOT_IMPLEMENTED,
-                "this chartplotter's waypoints cannot be exported",
-            );
-        }
+    // a Garmin unit: pull its waypoints and routes off the user-data bus (no HTTP endpoint, no tracks)
+    if let Some(p) = r
+        .discovery
+        .get(&serial)
+        .filter(|p| matches!(&p.screen, Some(mfd_net::screen::Screen::Garmin(_))))
+    {
+        return match mfd_net::garmin_userdata::fetch(p.addr.ip()).await {
+            Ok((waypoints, routes)) => gpx_response(&p, &waypoints, &routes, &[], &serial),
+            Err(e) => fail(StatusCode::BAD_GATEWAY, e.to_string()),
+        };
     }
     let (p, waypoints, routes, tracks) = match r
         .discovery
@@ -481,7 +487,18 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
             Err((status, e)) => return fail(status, e),
         },
     };
-    let live = |v: &Vec<serde_json::Value>| {
+    gpx_response(&p, &waypoints, &routes, &tracks, &serial)
+}
+
+/// A GPX download from a plotter's waypoints, routes and tracks (deleted items are dropped by [`gpx::gpx`]).
+fn gpx_response(
+    p: &mfd_net::discovery::Plotter,
+    waypoints: &[serde_json::Value],
+    routes: &[serde_json::Value],
+    tracks: &[gpx::Track],
+    serial: &str,
+) -> Response {
+    let live = |v: &[serde_json::Value]| {
         v.iter()
             .filter(|x| x.get("deleted_at").and_then(|d| d.as_i64()).unwrap_or(0) <= 0)
             .count()
@@ -489,8 +506,8 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
     log::info!(
         "GPX of {} ({serial}): {} waypoints, {} routes, {} tracks",
         p.model,
-        live(&waypoints),
-        live(&routes),
+        live(waypoints),
+        live(routes),
         tracks.len()
     );
     let name = p.name.clone().unwrap_or_else(|| p.model.clone());
@@ -502,7 +519,7 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
                 format!("attachment; filename=\"{}.gpx\"", file_name(&name)),
             ),
         ],
-        gpx::gpx(&format!("mfd-bosun ({name})"), &waypoints, &routes, &tracks),
+        gpx::gpx(&format!("mfd-bosun ({name})"), waypoints, routes, tracks),
     )
         .into_response()
 }

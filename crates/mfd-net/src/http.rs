@@ -95,6 +95,9 @@ pub async fn get(addr: SocketAddr, path: &str) -> std::io::Result<Response> {
     tokio::time::timeout(REQUEST_TIMEOUT, run)
         .await
         .map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::TimedOut, format!("GET {path} on {addr}"))
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("GET {path} on {addr}"),
+            )
         })?
 }

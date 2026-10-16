@@ -101,7 +101,10 @@ impl Screen {
     pub fn rtsp_url(&self, ip: IpAddr) -> String {
         match self {
             Screen::Navico(_) => {
-                format!("rtsp://{}/screenmirror", SocketAddr::new(ip, nos::RTSP_PORT))
+                format!(
+                    "rtsp://{}/screenmirror",
+                    SocketAddr::new(ip, nos::RTSP_PORT)
+                )
             }
             Screen::Garmin(i) => i.rtsp_url(ip),
         }

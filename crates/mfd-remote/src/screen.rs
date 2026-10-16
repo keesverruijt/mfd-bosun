@@ -56,7 +56,12 @@ pub struct Feeds(Arc<Mutex<HashMap<String, Arc<Feed>>>>);
 
 impl Feeds {
     /// The unit's frames, from now on.
-    fn watch(&self, serial: &str, url: String, transport: RtspTransport) -> broadcast::Receiver<Frame> {
+    fn watch(
+        &self,
+        serial: &str,
+        url: String,
+        transport: RtspTransport,
+    ) -> broadcast::Receiver<Frame> {
         let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(f) = g.get(serial) {
             return f.frames.subscribe();
@@ -437,7 +442,9 @@ pub async fn serve(
     mac: [u8; 6],
     device_name: String,
 ) {
-    let Some(screen) = p.screen.clone() else { return };
+    let Some(screen) = p.screen.clone() else {
+        return;
+    };
     let (w, h) = screen.size();
     let serial = p.serial.clone();
     let (mut to_browser, mut from_browser) = browser.split();
@@ -488,7 +495,10 @@ pub async fn serve(
     tokio::spawn(control(
         screen.clone(),
         p.addr.ip(),
-        Client { name: device_name, mac },
+        Client {
+            name: device_name,
+            mac,
+        },
         in_rx,
         status_tx,
     ));

@@ -101,10 +101,14 @@ pub async fn info(addr: SocketAddr) -> std::io::Result<Info> {
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "no answer"))??;
     s.set_nodelay(true)?;
     let (mut r, mut w) = s.into_split();
-    w.write_all(&message(OP_HELLO, &rand_u16().to_le_bytes())).await?;
-    w.write_all(&message(OP_HANDSHAKE, &rand_u64().to_le_bytes())).await?;
-    w.write_all(&message(OP_ENUMERATE, &KEY_MODEL.to_le_bytes())).await?;
-    w.write_all(&message(OP_ENUMERATE, &KEY_RTSP_URLS.to_le_bytes())).await?;
+    w.write_all(&message(OP_HELLO, &rand_u16().to_le_bytes()))
+        .await?;
+    w.write_all(&message(OP_HANDSHAKE, &rand_u64().to_le_bytes()))
+        .await?;
+    w.write_all(&message(OP_ENUMERATE, &KEY_MODEL.to_le_bytes()))
+        .await?;
+    w.write_all(&message(OP_ENUMERATE, &KEY_RTSP_URLS.to_le_bytes()))
+        .await?;
     let read = async {
         let model = enum_string(&read_enum(&mut r, KEY_MODEL).await?);
         let urls = enum_string(&read_enum(&mut r, KEY_RTSP_URLS).await?);
@@ -146,7 +150,11 @@ fn parse_build_version(html: &str) -> Option<String> {
 /// The host and resolution of the first `helm_<W>x<H>.h264` RTSP URL in a `\r\n`-separated list.
 fn parse_helm_url(urls: &str) -> Option<(String, u16, u16)> {
     let url = urls.lines().map(str::trim).find(|l| l.contains("/helm_"))?;
-    let host = url.strip_prefix("rtsp://")?.split([':', '/']).next()?.to_string();
+    let host = url
+        .strip_prefix("rtsp://")?
+        .split([':', '/'])
+        .next()?
+        .to_string();
     let dims = url.rsplit_once("/helm_")?.1.strip_suffix(".h264")?;
     let (w, h) = dims.split_once('x')?;
     Some((host, w.parse().ok()?, h.parse().ok()?))
@@ -182,7 +190,14 @@ fn message(opcode: u32, payload: &[u8]) -> Vec<u8> {
 /// four session-random bytes — the plotter does not supply these).
 fn session_ctx(surface_id: [u8; 4], tag: [u8; 4]) -> [u8; 9] {
     [
-        surface_id[0], surface_id[1], surface_id[2], surface_id[3], 0x01, tag[0], tag[1], tag[2],
+        surface_id[0],
+        surface_id[1],
+        surface_id[2],
+        surface_id[3],
+        0x01,
+        tag[0],
+        tag[1],
+        tag[2],
         tag[3],
     ]
 }
@@ -233,10 +248,13 @@ impl Control {
         s.set_nodelay(true)?;
         let (mut r, mut w) = s.into_split();
         // client side of the handshake, as observed
-        w.write_all(&message(OP_HELLO, &rand_u16().to_le_bytes())).await?;
-        w.write_all(&message(OP_HANDSHAKE, &rand_u64().to_le_bytes())).await?;
+        w.write_all(&message(OP_HELLO, &rand_u16().to_le_bytes()))
+            .await?;
+        w.write_all(&message(OP_HANDSHAKE, &rand_u64().to_le_bytes()))
+            .await?;
         for v in SUBSCRIBE {
-            w.write_all(&message(OP_ENUMERATE, &v.to_le_bytes())).await?;
+            w.write_all(&message(OP_ENUMERATE, &v.to_le_bytes()))
+                .await?;
         }
         // ask for a surface and wait for the plotter to name one; its id routes our pointer events.
         w.write_all(&message(OP_NEW_SURFACE, &[])).await?;

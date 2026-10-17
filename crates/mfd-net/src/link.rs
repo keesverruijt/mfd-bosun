@@ -33,6 +33,9 @@ pub struct Device {
     /// The port of its remote control (`navico-mfd-rp` in its `Services`): a NOS unit's 6633. A NEON
     /// one does not list it.
     pub remote_port: Option<u16>,
+    /// The software version it announced (`AppVersion`); a NOS unit does not give a real one over its
+    /// control port.
+    pub app_version: Option<String>,
 }
 
 /// A line for the page: the state of the network path, and whether it is good news.
@@ -253,7 +256,14 @@ pub async fn receive_announcements(net: Network, sock: UdpSocket) -> std::io::Re
                 let ip = |k: &str| v.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<Ipv4Addr>().ok());
                 let Some(ll) = ip("IP_Zeroconfig") else { continue };
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-                let d = Device { name: s("Name"), model: s("Model"), ip: ip("IP"), remote_port: remote_port(&v) };
+                let app_version = s("AppVersion");
+                let d = Device {
+                    name: s("Name"),
+                    model: s("Model"),
+                    ip: ip("IP"),
+                    remote_port: remote_port(&v),
+                    app_version: (!app_version.is_empty()).then_some(app_version),
+                };
                 if net.insert_device(ll, d.clone()) {
                     log::info!("{} \"{}\" at {} / {ll}", d.model, d.name, d.ip.map(|a| a.to_string()).unwrap_or_default());
                 }
@@ -526,6 +536,7 @@ mod tests {
             model: "Vulcan".into(),
             ip: ip.map(|s| s.parse().unwrap()),
             remote_port: Some(6633),
+            app_version: None,
         };
         // a link-local-only chartplotter, and we hold only a routable address elsewhere: no path
         let ifs = vec![iface("en0", &["172.16.3.150"])];

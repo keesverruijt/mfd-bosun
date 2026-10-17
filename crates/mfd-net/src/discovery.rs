@@ -101,6 +101,9 @@ struct Inner {
     /// Every address worth probing: from mDNS, from the user, from what answered before.
     candidates: HashSet<SocketAddr>,
     names: BTreeMap<Ipv4Addr, String>,
+    /// The software version a chartplotter announced, by address: a NOS unit does not give a real one
+    /// over its control port (it answers 0.0.0), but its announcement carries it.
+    versions: BTreeMap<Ipv4Addr, String>,
     /// Why the last probe of an address failed, so that it is logged once, not every probe.
     failing: HashMap<SocketAddr, String>,
 }
@@ -154,6 +157,31 @@ impl Discovery {
         for p in g.plotters.values_mut() {
             if p.addr.ip() == IpAddr::V4(ip) && p.name.as_deref() != Some(name) {
                 p.name = Some(name.to_string());
+                changed = true;
+            }
+        }
+        drop(g);
+        if changed {
+            self.changed.send_replace(());
+        }
+    }
+
+    /// The software version a chartplotter announced for itself. Used only where a probe learned no
+    /// real version (a NOS unit's control port gives 0.0.0), so a NEON unit's REST version stands.
+    pub fn set_os_version(&self, ip: Ipv4Addr, version: &str) {
+        if version.is_empty() || version == "0.0.0" {
+            return;
+        }
+        let mut g = self.lock();
+        if g.versions.get(&ip).is_some_and(|v| v == version) {
+            return;
+        }
+        g.versions.insert(ip, version.to_string());
+        let mut changed = false;
+        for p in g.plotters.values_mut() {
+            if p.addr.ip() == IpAddr::V4(ip) && (p.os_version.is_empty() || p.os_version == "0.0.0")
+            {
+                p.os_version = version.to_string();
                 changed = true;
             }
         }
@@ -272,6 +300,13 @@ impl Discovery {
             _ => None,
         }
         .or(info.name);
+        // a NOS unit answers 0.0.0 over its control port; prefer the version it announced instead
+        let os_version = match addr.ip() {
+            IpAddr::V4(ip) if info.os_version.is_empty() || info.os_version == "0.0.0" => {
+                g.versions.get(&ip).cloned().unwrap_or(info.os_version)
+            }
+            _ => info.os_version,
+        };
         let changed = match g.plotters.get_mut(&info.serial) {
             Some(p) => {
                 // it answers on several addresses: keep the one we have while it answers there, but
@@ -286,7 +321,7 @@ impl Discovery {
                     return;
                 }
                 p.last_seen = Instant::now();
-                p.os_version = info.os_version;
+                p.os_version = os_version;
                 if name.is_some() {
                     p.name = name;
                 }
@@ -302,7 +337,7 @@ impl Discovery {
                         serial: info.serial,
                         model: info.model,
                         brand: info.brand,
-                        os_version: info.os_version,
+                        os_version,
                         name,
                         addr,
                         last_seen: Instant::now(),

@@ -265,6 +265,9 @@ async fn follow_announcements(fs: neon_forwardscan::state::State, discovery: Dis
         for (_, d) in devices {
             if let Some(ip) = d.ip {
                 discovery.set_name(ip, &d.name);
+                if let Some(v) = &d.app_version {
+                    discovery.set_os_version(ip, v);
+                }
                 if let Some(port) = d.remote_port {
                     discovery.add_address(SocketAddr::new(IpAddr::V4(ip), port));
                 }

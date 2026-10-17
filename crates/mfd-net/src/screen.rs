@@ -1,13 +1,14 @@
 //! The vendor-neutral view of a chartplotter's remote screen: what it is ([`Screen`]) and a live control
-//! connection to it ([`Control`]). The bridge in `mfd-remote` drives Navico ([`crate::nos`]) and Garmin
-//! ([`crate::garmin`]) plotters — and, in time, others — through just these.
+//! connection to it ([`Control`]). The bridge in `mfd-remote` drives Navico ([`crate::nos`]), Garmin
+//! ([`crate::garmin`]) and Raymarine ([`crate::raymarine`]) plotters — and, in time, others — through just
+//! these.
 //!
-//! Both kinds share a screen as an RTSP H.264 stream and take input over a vendor TCP protocol. What differs
-//! is the RTSP URL, the input wire format, the coordinate space (Navico uses screen pixels, Garmin a 0..65535
-//! normalization) and the access model — all hidden here. The bridge works in normalized coordinates
+//! All share a screen as an RTSP H.264 stream and take input over a vendor TCP protocol. What differs is the
+//! RTSP URL, the input wire format, the coordinate space (Navico uses screen pixels; Garmin and Raymarine a
+//! 0..65535 normalization) and the access model — all hidden here. The bridge works in normalized coordinates
 //! (0.0..=1.0 across the picture); each vendor maps them to its own space.
 
-use crate::{garmin, nos};
+use crate::{garmin, nos, raymarine};
 use std::net::{IpAddr, SocketAddr};
 use tokio::sync::watch;
 
@@ -19,8 +20,8 @@ pub enum Phase {
     Up,
 }
 
-/// How the plotter's RTSP server wants its RTP carried. Navico interleaves it over the RTSP TCP connection;
-/// Garmin serves only over UDP (it rejects interleaved SETUP with 461 Unsupported Transport).
+/// How the plotter's RTSP server wants its RTP carried. Navico and Raymarine interleave it over the RTSP TCP
+/// connection; Garmin serves only over UDP (it rejects interleaved SETUP with 461 Unsupported Transport).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspTransport {
     Tcp,
@@ -36,7 +37,7 @@ pub enum Access {
 }
 
 /// Who we tell the plotter we are when connecting for control (a Navico unit shows and remembers the MAC;
-/// Garmin uses neither).
+/// Garmin and Raymarine use neither).
 #[derive(Clone)]
 pub struct Client {
     pub name: String,
@@ -49,14 +50,16 @@ pub struct Client {
 pub enum Screen {
     Navico(nos::Info),
     Garmin(garmin::Info),
+    Raymarine(raymarine::Info),
 }
 
 impl Screen {
-    /// A short tag for the page: "nos" or "garmin".
+    /// A short tag for the page: "nos", "garmin" or "raymarine".
     pub fn kind(&self) -> &'static str {
         match self {
             Screen::Navico(_) => "nos",
             Screen::Garmin(_) => "garmin",
+            Screen::Raymarine(_) => "raymarine",
         }
     }
 
@@ -64,6 +67,7 @@ impl Screen {
         match self {
             Screen::Navico(i) => i.brand(),
             Screen::Garmin(i) => i.brand(),
+            Screen::Raymarine(i) => i.brand(),
         }
     }
 
@@ -71,6 +75,7 @@ impl Screen {
         match self {
             Screen::Navico(i) => &i.model,
             Screen::Garmin(i) => &i.model,
+            Screen::Raymarine(i) => &i.model,
         }
     }
 
@@ -78,6 +83,7 @@ impl Screen {
         match self {
             Screen::Navico(i) => &i.name,
             Screen::Garmin(i) => &i.name,
+            Screen::Raymarine(i) => &i.name,
         }
     }
 
@@ -86,6 +92,7 @@ impl Screen {
         match self {
             Screen::Navico(i) => (i.width, i.height),
             Screen::Garmin(i) => (i.width, i.height),
+            Screen::Raymarine(i) => (i.width, i.height),
         }
     }
 
@@ -94,6 +101,7 @@ impl Screen {
         match self {
             Screen::Navico(_) => RtspTransport::Tcp,
             Screen::Garmin(_) => RtspTransport::Udp,
+            Screen::Raymarine(_) => RtspTransport::Tcp,
         }
     }
 
@@ -107,14 +115,16 @@ impl Screen {
                 )
             }
             Screen::Garmin(i) => i.rtsp_url(ip),
+            Screen::Raymarine(i) => i.rtsp_url(ip),
         }
     }
 
-    /// The hardkeys this plotter exposes, by name (Garmin Helm: none).
+    /// The hardkeys this plotter exposes, by name (Garmin Helm and Raymarine: none yet).
     pub fn keys(&self) -> Vec<String> {
         match self {
             Screen::Navico(i) => i.keys.iter().map(|(n, _)| n.clone()).collect(),
             Screen::Garmin(_) => Vec::new(),
+            Screen::Raymarine(_) => Vec::new(),
         }
     }
 
@@ -128,6 +138,9 @@ impl Screen {
                     .map(Control::Navico)
             }
             Screen::Garmin(_) => garmin::Control::connect(ip).await.map(Control::Garmin),
+            Screen::Raymarine(_) => raymarine::Control::connect(ip)
+                .await
+                .map(Control::Raymarine),
         }
     }
 }
@@ -136,6 +149,7 @@ impl Screen {
 pub enum Control {
     Navico(nos::Control),
     Garmin(garmin::Control),
+    Raymarine(raymarine::Control),
 }
 
 impl Control {
@@ -144,6 +158,7 @@ impl Control {
         match self {
             Control::Navico(c) => c.pointer(fx, fy, phase).await,
             Control::Garmin(c) => c.pointer(fx, fy, phase).await,
+            Control::Raymarine(c) => c.pointer(fx, fy, phase).await,
         }
     }
 
@@ -152,6 +167,7 @@ impl Control {
         match self {
             Control::Navico(c) => c.key_named(name, down).await,
             Control::Garmin(c) => c.key(name, down).await,
+            Control::Raymarine(c) => c.key(name, down).await,
         }
     }
 
@@ -160,6 +176,7 @@ impl Control {
         match self {
             Control::Navico(c) => c.access.clone(),
             Control::Garmin(c) => c.access(),
+            Control::Raymarine(c) => c.access(),
         }
     }
 }

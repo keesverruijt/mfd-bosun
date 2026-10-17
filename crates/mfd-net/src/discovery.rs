@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
-use crate::{api, garmin, nos, screen::Screen};
+use crate::{api, garmin, nos, raymarine, screen::Screen};
 
 pub const SERVICE_TYPE: &str = "_neonapi._tcp.local.";
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
@@ -78,6 +78,8 @@ impl From<&Plotter> for PlotterView {
             None => (true, true),
             Some(Screen::Navico(_)) => (true, false),
             Some(Screen::Garmin(_)) => (true, false),
+            // Raymarine: screen (and control) only for now; no waypoint export yet.
+            Some(Screen::Raymarine(_)) => (false, false),
         };
         PlotterView {
             serial: p.serial.clone(),
@@ -104,6 +106,9 @@ struct Inner {
     /// The software version a chartplotter announced, by address: a NOS unit does not give a real one
     /// over its control port (it answers 0.0.0), but its announcement carries it.
     versions: BTreeMap<Ipv4Addr, String>,
+    /// A Raymarine screen's identity from its mDNS TXT (model/serial/rtsp-path), by address. The probe
+    /// to its RTSP port fills in the pixel size and refreshes liveness, but the id is mDNS-only.
+    raymarine: BTreeMap<Ipv4Addr, (String, raymarine::Info)>,
     /// Why the last probe of an address failed, so that it is logged once, not every probe.
     failing: HashMap<SocketAddr, String>,
 }
@@ -125,7 +130,8 @@ impl Discovery {
             Ok(daemon) => {
                 tokio::spawn(d.clone().browse(daemon.clone(), SERVICE_TYPE));
                 tokio::spawn(d.clone().browse(daemon.clone(), nos::SERVICE_TYPE));
-                tokio::spawn(d.clone().browse(daemon, garmin::SERVICE_TYPE));
+                tokio::spawn(d.clone().browse(daemon.clone(), garmin::SERVICE_TYPE));
+                tokio::spawn(d.clone().browse(daemon, raymarine::SERVICE_TYPE));
             }
             Err(e) => {
                 log::warn!("mDNS unavailable, chartplotters will not be found by themselves: {e}")
@@ -218,6 +224,23 @@ impl Discovery {
                 let mut addrs: Vec<Ipv4Addr> = s.get_addresses_v4().into_iter().collect();
                 addrs.sort_by_key(|a| (a.is_link_local(), *a));
                 log::debug!("mDNS: {} at {addrs:?}:{}", s.fullname, s.port);
+                // Raymarine browses `_rtsp._tcp`, shared with cameras: take only MFDs (their TXT has
+                // `raymarine-mfd-serial`), cache the id from the TXT, and probe the RTSP port for size.
+                if service == raymarine::SERVICE_TYPE {
+                    let txt = |k: &str| s.get_property_val_str(k).map(str::to_string);
+                    if let Some((serial, info)) = raymarine::info_from_txt(txt, s.port) {
+                        {
+                            let mut g = self.lock();
+                            for a in &addrs {
+                                g.raymarine.insert(*a, (serial.clone(), info.clone()));
+                            }
+                        }
+                        for a in &addrs {
+                            self.add_address(SocketAddr::new(IpAddr::V4(*a), info.rtsp_port));
+                        }
+                    }
+                    continue;
+                }
                 // The Garmin `_garmin-helm._tcp` SRV already points at the control port, as the others
                 // point at their service's port.
                 for a in addrs {
@@ -253,7 +276,34 @@ impl Discovery {
     }
 
     async fn probe(self, addr: SocketAddr) {
-        let found = if addr.port() == nos::PORT {
+        let found = if addr.port() == raymarine::RTSP_PORT {
+            // identity comes from the cached mDNS TXT; the RTSP DESCRIBE gives the pixel size and
+            // confirms it is alive.
+            let cached = match addr.ip() {
+                IpAddr::V4(ip) => self.lock().raymarine.get(&ip).cloned(),
+                _ => None,
+            };
+            match cached {
+                Some((serial, mut info)) => {
+                    match raymarine::screen_size(addr.ip(), info.rtsp_port, &info.rtsp_path).await {
+                        Ok((w, h)) => {
+                            info.width = w;
+                            info.height = h;
+                            Ok(Found {
+                                serial,
+                                model: info.model.clone(),
+                                brand: info.brand().to_string(),
+                                os_version: String::new(),
+                                name: Some(info.name.clone()).filter(|s| !s.is_empty()),
+                                screen: Some(Screen::Raymarine(info)),
+                            })
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                None => Err(std::io::Error::other("not a known Raymarine screen")),
+            }
+        } else if addr.port() == nos::PORT {
             nos::info(addr).await.map(|n| Found {
                 serial: nos_id(&n),
                 model: n.model.clone(),

@@ -11,6 +11,7 @@ pub mod http;
 pub mod link;
 pub mod netif;
 pub mod nos;
+pub mod raymarine;
 pub mod screen;
 pub mod tls;
 pub mod ws;

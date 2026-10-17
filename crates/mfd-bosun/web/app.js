@@ -5,7 +5,7 @@ import { Session, sendFile, signalUrl, newClientKey, CLOSE_PASSWORD, CLOSE_UNKNO
 const $ = (id) => document.getElementById(id)
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
-const brands = { bandg: 'B&G', simrad: 'Simrad', lowrance: 'Lowrance' }
+const brands = { bandg: 'B&G', simrad: 'Simrad', lowrance: 'Lowrance', raymarine: 'Raymarine' }
 
 function plotterCard(p) {
   const brand = brands[p.brand] ?? p.brand

@@ -12,6 +12,9 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 if-addrs = "0.15.0"
 log = "0.4.34"
 mfd-net = { version = "0.1.0", path = "../mfd-net" }
+# TODO: on our fork for SessionOptions::bind (binds the RTSP source address, needed to reach a
+# link-local-only chartplotter). Once scottlamb/retina#149 is merged and released, switch back to a
+# crates.io version ("0.4" or newer) and delete the keesverruijt/retina fork + branch.
 retina = { git = "https://github.com/keesverruijt/retina", branch = "bind-local-address" }
 ring = { version = "0.17.14", default-features = false }
 rust-embed = "8.12.0"

@@ -68,8 +68,8 @@ fn ecrr(phase: Phase, x: u16, y: u16) -> [u8; 15] {
     p[4..9].copy_from_slice(&[0x01, 0x0a, 0x03, 0x06, 0x00]);
     p[9] = ev;
     p[10] = 0x00;
-    p[11..13].copy_from_slice(&x.to_be_bytes());
-    p[13..15].copy_from_slice(&y.to_be_bytes());
+    p[11..13].copy_from_slice(&x.to_le_bytes());
+    p[13..15].copy_from_slice(&y.to_le_bytes());
     p
 }
 
@@ -294,13 +294,13 @@ mod tests {
 
     #[test]
     fn ecrr_touch_message_matches_the_capture() {
-        // a DOWN at the normalized point that the capture showed as 0xe582, 0x32f3
-        let m = ecrr(Phase::Down, 0xe582, 0x32f3);
+        // the capture's wire bytes `e5 82 32 f3` are the coordinate little-endian: x=0x82e5, y=0xf332
+        let m = ecrr(Phase::Down, 0x82e5, 0xf332);
         assert_eq!(&m[0..4], b"ECRR");
         assert_eq!(&m[4..11], &[0x01, 0x0a, 0x03, 0x06, 0x00, 0x01, 0x00]);
         assert_eq!(&m[11..15], &[0xe5, 0x82, 0x32, 0xf3]);
         // UP of the same tap keeps the coordinate, changes only the phase byte
-        assert_eq!(ecrr(Phase::Up, 0xe582, 0x32f3)[9], 0x03);
+        assert_eq!(ecrr(Phase::Up, 0x82e5, 0xf332)[9], 0x03);
         assert_eq!(ecrr(Phase::Move, 0, 0)[9], 0x02);
     }
 

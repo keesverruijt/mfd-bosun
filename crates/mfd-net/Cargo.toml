@@ -15,10 +15,18 @@ hyper = { version = "1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 log = "0.4.34"
 mdns-sd = "0.21.4"
-ring = { version = "0.17.14", default-features = false }
+network-interface = "2.0.5"
+ring ={ version = "0.17.14", default-features = false }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-tokio = { version = "1.53.1", features = ["net", "time", "sync", "rt", "macros", "fs", "io-util"] }
+socket2 = { version = "0.6", features = ["all"] }
+tokio ={ version = "1.53.1", features = ["net", "time", "sync", "rt", "macros", "fs", "io-util"] }
 tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "tls12"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }

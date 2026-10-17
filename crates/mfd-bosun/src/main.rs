@@ -261,8 +261,8 @@ async fn follow_announcements(fs: neon_forwardscan::state::State, discovery: Dis
     let mut tick = tokio::time::interval(Duration::from_secs(5));
     loop {
         tick.tick().await;
-        let devices: Vec<_> = fs.lock().devices.values().cloned().collect();
-        for d in devices {
+        let devices = fs.net.devices();
+        for (_, d) in devices {
             if let Some(ip) = d.ip {
                 discovery.set_name(ip, &d.name);
                 if let Some(port) = d.remote_port {
@@ -310,13 +310,43 @@ async fn status(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
             v
         })
         .collect();
+    // Chartplotters we heard announce themselves but hold no address to reach: a failed probe never
+    // becomes a listed plotter, so without this they would be invisible. Show the ones not already
+    // listed, so the user sees they are there but on a network this computer is not on.
+    let listed: std::collections::HashSet<String> = plotters
+        .iter()
+        .filter_map(|v| v["address"].as_str().map(str::to_string))
+        .collect();
+    let unreachable: Vec<serde_json::Value> = app
+        .forwardscan
+        .as_ref()
+        .map(|s| {
+            s.net
+                .unreachable()
+                .into_iter()
+                .map(|(ll, d)| {
+                    let address = d.ip.unwrap_or(ll).to_string();
+                    let name = if d.name.is_empty() {
+                        d.model.clone()
+                    } else {
+                        d.name.clone()
+                    };
+                    json!({ "name": name, "model": d.model, "address": address })
+                })
+                .filter(|v| !listed.contains(v["address"].as_str().unwrap_or("")))
+                .collect()
+        })
+        .unwrap_or_default();
     let forwardscan = app.forwardscan.as_ref().map(|s| {
         let g = s.lock();
-        json!({ "sources": neon_forwardscan::state::sources(&g) })
+        json!({ "sources": neon_forwardscan::state::sources(&s.net, &g) })
     });
-    Json(
-        json!({ "version": env!("CARGO_PKG_VERSION"), "plotters": plotters, "forwardScan": forwardscan }),
-    )
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "plotters": plotters,
+        "unreachable": unreachable,
+        "forwardScan": forwardscan,
+    }))
 }
 
 async fn asset(uri: Uri) -> Response {

@@ -1477,15 +1477,19 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "log",
  "mdns-sd",
+ "network-interface",
  "ring",
  "rustls",
  "serde",
  "serde_json",
+ "socket2 0.6.5",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite 0.30.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1586,6 +1590,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
+ "mfd-net",
  "network-interface",
  "rust-embed",
  "serde",

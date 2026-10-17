@@ -100,6 +100,16 @@ $('plotters').addEventListener('drop', (e) => {
   upload(li.dataset.serial, f)
 })
 
+// a chartplotter heard announcing itself but on a network this computer cannot reach
+function unreachableCard(u) {
+  const detail = [u.model, u.address, 'not on this computer’s network'].filter(Boolean).join(' · ')
+  return `<li class="plotter offline">
+    <span class="card">
+      <span class="dot" title="seen, but not reachable from this computer’s network"></span>
+      <span class="what"><b>${esc(u.name)}</b><small>${esc(detail)}</small></span>
+    </span></li>`
+}
+
 function sonarCard(s) {
   return `<li>
     <a class="card${s.live ? '' : ' offline'}" href="forwardscan/">
@@ -126,8 +136,9 @@ async function refresh() {
   const html = JSON.stringify(st)
   if (html === shown) return
   shown = html
-  $('plotters').innerHTML = st.plotters.map(plotterCard).join('')
-  $('none').hidden = st.plotters.length > 0
+  const unreachable = st.unreachable ?? []
+  $('plotters').innerHTML = st.plotters.map(plotterCard).join('') + unreachable.map(unreachableCard).join('')
+  $('none').hidden = st.plotters.length > 0 || unreachable.length > 0
   const sources = st.forwardScan?.sources ?? []
   $('fs').hidden = !st.forwardScan
   $('sonars').innerHTML = sources.length

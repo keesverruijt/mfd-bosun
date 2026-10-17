@@ -96,11 +96,13 @@ async fn api_state(AxState(state): AxState<State>) -> Json<serde_json::Value> {
         .blocks
         .iter()
         .map(|(ip, b)| {
-            let name = g.devices.get(ip).map(|d| d.name.clone()).unwrap_or_else(|| ip.to_string());
-            json!({ "address": ip.to_string(), "name": name, "settings": protocol::parse_control(b) })
+            json!({ "address": ip.to_string(), "name": state.name_of(*ip), "settings": protocol::parse_control(b) })
         })
         .collect();
-    Json(json!({ "allowControl": state.allow_control, "forwardScan": fs, "network": g.notice }))
+    drop(g);
+    Json(
+        json!({ "allowControl": state.allow_control, "forwardScan": fs, "network": state.net.notice() }),
+    )
 }
 
 fn fail(status: StatusCode, error: impl Into<String>) -> Response {
@@ -127,10 +129,9 @@ async fn api_forwardscan(AxState(state): AxState<State>, body: String) -> Respon
         let g = state.lock();
         let sonars: Vec<Ipv4Addr> = g.blocks.keys().copied().collect();
         let ip = match &change.source {
-            Some(s) => sonars
-                .iter()
-                .copied()
-                .find(|a| a.to_string() == *s || g.devices.get(a).is_some_and(|d| d.name == *s)),
+            Some(s) => sonars.iter().copied().find(|a| {
+                a.to_string() == *s || state.net.device(*a).is_some_and(|d| d.name == *s)
+            }),
             None if sonars.len() == 1 => Some(sonars[0]),
             None => None,
         };
@@ -150,8 +151,8 @@ async fn api_forwardscan(AxState(state): AxState<State>, body: String) -> Respon
         (
             ip,
             g.blocks[&ip].clone(),
-            g.control.link_local.is_some(),
-            g.notice.clone(),
+            state.net.control().link_local.is_some(),
+            state.net.notice(),
         )
     };
     let block = match protocol::build_control(&latest, &change) {

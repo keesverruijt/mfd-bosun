@@ -8,6 +8,8 @@ pub mod discovery;
 pub mod garmin;
 pub mod garmin_userdata;
 pub mod http;
+pub mod link;
+pub mod netif;
 pub mod nos;
 pub mod screen;
 pub mod tls;

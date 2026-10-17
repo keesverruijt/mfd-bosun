@@ -36,7 +36,8 @@ async fn main() {
     let args = Args::parse();
     let level = ["info", "debug", "trace"][args.verbose.min(2) as usize];
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or(format!("neon_forwardscan={level}")),
+        env_logger::Env::default()
+            .default_filter_or(format!("neon_forwardscan={level},mfd_net={level}")),
     )
     .init();
 

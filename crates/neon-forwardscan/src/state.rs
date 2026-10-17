@@ -1,15 +1,19 @@
-//! What we know about the sonars on the network, shared by the receivers, the network task and
-//! the web server. Everything the page needs goes out over one broadcast channel.
+//! What we know about the sonars on the network, shared by the receivers, the network task and the
+//! web server. The general network state (chartplotters seen, the control path, the notice) lives in
+//! the common [`mfd_net::link::Network`]; this holds only the ForwardScan-specific sonar data.
+//! Everything the page needs goes out over one broadcast channel.
 
 use axum::body::Bytes;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 use crate::protocol;
+
+pub use mfd_net::link::{ControlPath, Device, Network, Notice};
 
 pub const DATA_TTL: Duration = Duration::from_secs(10);
 
@@ -19,46 +23,19 @@ pub enum Out {
     Text(String),
 }
 
-/// A chartplotter as it announces itself (UDP multicast 239.2.1.1:2052).
-#[derive(Clone, Debug, Default)]
-pub struct Device {
-    pub name: String,
-    pub model: String,
-    pub ip: Option<Ipv4Addr>,
-    /// The port of its remote control (`navico-mfd-rp` in its `Services`): a NOS unit's 6633. A NEON one
-    /// does not list it.
-    pub remote_port: Option<u16>,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct Notice {
-    pub ok: bool,
-    pub text: String,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ControlPath {
-    #[cfg_attr(windows, allow(dead_code))]
-    pub iface: Option<String>,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub index: u32,
-    pub link_local: Option<Ipv4Addr>,
-}
-
+/// The ForwardScan-specific state: the sonars' latest settings blocks and when they last pinged.
 #[derive(Default)]
 pub struct Inner {
     /// Sonar 169.254 address -> its latest own ForwardScan settings block (UDP 10756).
     pub blocks: HashMap<Ipv4Addr, Vec<u8>>,
     pub last_ping: HashMap<Ipv4Addr, Instant>,
-    /// 169.254 address -> the device's announcement.
-    pub devices: HashMap<Ipv4Addr, Device>,
-    pub control: ControlPath,
-    pub notice: Option<Notice>,
     sources_sent: String,
 }
 
 #[derive(Clone)]
 pub struct State {
+    /// The common network state: the chartplotters seen, the control path and the notice.
+    pub net: Network,
     pub inner: Arc<Mutex<Inner>>,
     pub tx: broadcast::Sender<Out>,
     pub allow_control: bool,
@@ -72,6 +49,7 @@ impl State {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
         State {
+            net: Network::new(),
             inner: Default::default(),
             tx: broadcast::channel(64).0,
             allow_control,
@@ -79,7 +57,7 @@ impl State {
         }
     }
 
-    pub fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+    pub fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -88,12 +66,7 @@ impl State {
     }
 
     pub fn name_of(&self, ip: Ipv4Addr) -> String {
-        self.lock()
-            .devices
-            .get(&ip)
-            .map(|d| d.name.clone())
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| ip.to_string())
+        self.net.name_of(ip)
     }
 
     /// The messages a newly connected page gets first.
@@ -101,11 +74,12 @@ impl State {
         let g = self.lock();
         let mut v =
             vec![json!({ "type": "config", "allowControl": self.allow_control, "instance": self.instance }).to_string()];
-        v.push(json!({ "type": "sources", "sources": sources(&g) }).to_string());
+        v.push(json!({ "type": "sources", "sources": sources(&self.net, &g) }).to_string());
         for (ip, b) in &g.blocks {
             v.push(json!({ "type": "forwardscanSettings", "address": ip.to_string(), "settings": protocol::parse_control(b) }).to_string());
         }
-        if let Some(n) = &g.notice {
+        drop(g);
+        if let Some(n) = self.net.notice() {
             v.push(json!({ "type": "network", "ok": n.ok, "text": n.text }).to_string());
         }
         v
@@ -114,38 +88,23 @@ impl State {
     /// Send the source list when it changed.
     pub fn refresh_sources(&self) {
         let mut g = self.lock();
-        let list = json!({ "type": "sources", "sources": sources(&g) }).to_string();
+        let list = json!({ "type": "sources", "sources": sources(&self.net, &g) }).to_string();
         if list != g.sources_sent {
             g.sources_sent = list.clone();
             drop(g);
             let _ = self.tx.send(Out::Text(list));
         }
     }
-
-    pub fn set_notice(&self, n: Notice) {
-        let mut g = self.lock();
-        if g.notice.as_ref() == Some(&n) {
-            return;
-        }
-        if n.ok {
-            log::info!("{}", n.text);
-        } else {
-            log::warn!("{}", n.text);
-        }
-        g.notice = Some(n.clone());
-        drop(g);
-        self.send_text(json!({ "type": "network", "ok": n.ok, "text": n.text }));
-    }
 }
 
 /// The sonars with ForwardScan: those that sent settings or pings.
-pub fn sources(g: &Inner) -> Vec<serde_json::Value> {
+pub fn sources(net: &Network, g: &Inner) -> Vec<serde_json::Value> {
     let mut ips: Vec<Ipv4Addr> = g.blocks.keys().chain(g.last_ping.keys()).copied().collect();
     ips.sort();
     ips.dedup();
     ips.iter()
         .map(|ip| {
-            let d = g.devices.get(ip).cloned().unwrap_or_default();
+            let d = net.device(*ip).unwrap_or_default();
             let live = g.last_ping.get(ip).is_some_and(|t| t.elapsed() < DATA_TTL);
             json!({
                 "address": ip.to_string(),

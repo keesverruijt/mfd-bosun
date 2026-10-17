@@ -21,7 +21,6 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::TcpStream;
 
 pub const PORT: u16 = 6633;
 pub const RTSP_PORT: u16 = 554;
@@ -165,7 +164,7 @@ pub fn parse_session_reply(b: &[u8]) -> Option<Info> {
 }
 
 async fn open(addr: SocketAddr) -> std::io::Result<(OwnedReadHalf, OwnedWriteHalf, Info)> {
-    let s = tokio::time::timeout(TIMEOUT, TcpStream::connect(addr))
+    let s = tokio::time::timeout(TIMEOUT, crate::link::connect(addr))
         .await
         .map_err(|_| std::io::Error::other("no answer"))??;
     s.set_nodelay(true)?;
@@ -203,7 +202,7 @@ pub async fn info(addr: SocketAddr) -> std::io::Result<Info> {
 pub async fn fetch(ip: std::net::IpAddr, path: &str) -> std::io::Result<Vec<u8>> {
     let addr = SocketAddr::new(ip, HTTP_PORT);
     let get = async {
-        let mut s = TcpStream::connect(addr).await?;
+        let mut s = crate::link::connect(addr).await?;
         let host = match ip {
             std::net::IpAddr::V6(v6) => format!("[{v6}]"),
             v4 => v4.to_string(),

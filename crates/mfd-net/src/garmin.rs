@@ -39,7 +39,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::TcpStream;
 use tokio::sync::watch;
 
 pub const RTSP_PORT: u16 = 554;
@@ -96,7 +95,7 @@ const KEY_MODEL: u32 = 0x0b; // model string, e.g. "GPSMAP 723xsv"
 /// Probes a Garmin plotter's control port for its identity: model, screen resolution and a stable id. Does
 /// the handshake and reads the two identity enumerate keys, without taking a surface.
 pub async fn info(addr: SocketAddr) -> std::io::Result<Info> {
-    let s = tokio::time::timeout(TIMEOUT, TcpStream::connect(addr))
+    let s = tokio::time::timeout(TIMEOUT, crate::link::connect(addr))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "no answer"))??;
     s.set_nodelay(true)?;
@@ -242,7 +241,7 @@ impl Control {
     /// Connects to the plotter's control port, does the handshake and obtains a drawing surface to steer.
     pub async fn connect(ip: IpAddr) -> std::io::Result<Control> {
         let addr = SocketAddr::new(ip, CONTROL_PORT);
-        let s = tokio::time::timeout(TIMEOUT, TcpStream::connect(addr))
+        let s = tokio::time::timeout(TIMEOUT, crate::link::connect(addr))
             .await
             .map_err(|_| std::io::Error::other("no answer"))??;
         s.set_nodelay(true)?;

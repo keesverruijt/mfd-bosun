@@ -35,7 +35,6 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 
 /// A Garmin semicircle (signed 32-bit) as degrees. 180°E/S wraps through the sign bit, so the raw value is
 /// read as `i32` first.
@@ -104,7 +103,7 @@ const PULL_TIMEOUT: Duration = Duration::from_secs(8);
 /// a record. The ActiveCaptain app should not be connected at the same time (then our client owns the session).
 pub async fn fetch(ip: IpAddr) -> io::Result<(Vec<Value>, Vec<Value>)> {
     let addr = SocketAddr::new(ip, DATA_PORT);
-    let s = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+    let s = tokio::time::timeout(CONNECT_TIMEOUT, crate::link::connect(addr))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "no answer"))??;
     s.set_nodelay(true)?;

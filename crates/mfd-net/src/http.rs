@@ -74,7 +74,7 @@ pub async fn request(
 pub async fn get(addr: SocketAddr, path: &str) -> std::io::Result<Response> {
     let io = |e: hyper::Error| std::io::Error::other(format!("GET {path} on {addr}: {e}"));
     let run = async {
-        let stream = tokio::net::TcpStream::connect(addr).await?;
+        let stream = crate::link::connect(addr).await?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(io)?;

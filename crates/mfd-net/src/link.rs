@@ -10,10 +10,10 @@ use serde::Serialize;
 use serde_json::json;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::collections::{HashMap, HashSet};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tokio::net::UdpSocket;
+use tokio::net::{TcpSocket, TcpStream, UdpSocket};
 use tokio::sync::broadcast;
 
 use crate::netif::{self, AddError, Iface};
@@ -201,6 +201,35 @@ pub fn v4(a: std::net::SocketAddr) -> Option<Ipv4Addr> {
 /// A UDP socket bound to the chartplotter-announcement port, ready for [`receive_announcements`].
 pub fn announcement_socket() -> std::io::Result<UdpSocket> {
     shared_socket(ANNOUNCE_PORT)
+}
+
+/// Connect to `addr` from a local address on the destination's subnet when we have one. The OS does
+/// not always pick a source the peer can reply to: on a host with several addresses (a 169.254
+/// link-local beside a routable one, or several LANs on one card) macOS in particular may source
+/// from the wrong one, and the peer, with no route back, never answers. Binding to a same-subnet
+/// source fixes it; with no matching address we leave the OS to route it (e.g. via a gateway).
+pub async fn connect(addr: SocketAddr) -> std::io::Result<TcpStream> {
+    if let SocketAddr::V4(v4) = addr {
+        if let Some(src) = source_for(*v4.ip()) {
+            let sock = TcpSocket::new_v4()?;
+            sock.bind(SocketAddr::new(IpAddr::V4(src), 0))?;
+            return sock.connect(addr).await;
+        }
+    }
+    TcpStream::connect(addr).await
+}
+
+/// A local IPv4 address on the same subnet as `dest`, on a real (non-virtual) interface.
+fn source_for(dest: Ipv4Addr) -> Option<Ipv4Addr> {
+    netif::list()
+        .into_iter()
+        .filter(|i| !i.is_virtual())
+        .flat_map(|i| i.addrs)
+        .find(|(a, m)| {
+            let m = u32::from(*m);
+            m != 0 && u32::from(*a) & m == u32::from(dest) & m
+        })
+        .map(|(a, _)| a)
 }
 
 /// The chartplotters' JSON announcements (UDP multicast 239.2.1.1:2052): name, model, both addresses.

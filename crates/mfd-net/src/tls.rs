@@ -35,7 +35,7 @@ pub fn config() -> Arc<ClientConfig> {
 
 /// A TCP + TLS connection to `addr`.
 pub async fn connect(addr: SocketAddr) -> std::io::Result<TlsStream<TcpStream>> {
-    let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+    let tcp = tokio::time::timeout(CONNECT_TIMEOUT, crate::link::connect(addr))
         .await
         .map_err(|_| {
             std::io::Error::new(

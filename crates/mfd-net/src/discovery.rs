@@ -35,6 +35,9 @@ pub struct Plotter {
     /// Where its REST API and signalling socket answer (NEON), or its remote-control port (NOS).
     pub addr: SocketAddr,
     pub last_seen: Instant,
+    /// Whether its screen can be controlled, not only viewed (a Raymarine unit set to "Viewing only"
+    /// can only be viewed).
+    pub can_control: bool,
     /// A remote-screen plotter (NOS or Garmin): what its probe learned. `None` for a NEON unit, whose
     /// browser does the WebRTC itself.
     pub screen: Option<Screen>,
@@ -57,8 +60,10 @@ pub struct PlotterView {
     pub name: String,
     pub address: String,
     pub online: bool,
-    /// "neon", "nos" or "garmin"
+    /// "neon", "nos", "garmin" or "raymarine"
     pub kind: &'static str,
+    /// Its screen can be controlled, not only viewed (false for a Raymarine unit in "Viewing only").
+    pub can_control: bool,
     /// Its waypoints and routes can be exported as GPX (NEON over its REST API, NOS from its own backup,
     /// Garmin off its user-data bus).
     pub waypoints: bool,
@@ -90,6 +95,7 @@ impl From<&Plotter> for PlotterView {
             address: p.addr.ip().to_string(),
             online: p.online(),
             kind: p.screen.as_ref().map(|s| s.kind()).unwrap_or("neon"),
+            can_control: p.can_control,
             waypoints,
             files,
             keys: p.screen.as_ref().map(Screen::keys).unwrap_or_default(),
@@ -228,7 +234,8 @@ impl Discovery {
                 // `raymarine-mfd-serial`), cache the id from the TXT, and probe the RTSP port for size.
                 if service == raymarine::SERVICE_TYPE {
                     let txt = |k: &str| s.get_property_val_str(k).map(str::to_string);
-                    if let Some((serial, info)) = raymarine::info_from_txt(txt, s.port) {
+                    if let Some((serial, mut info)) = raymarine::info_from_txt(txt, s.port) {
+                        info.firmware = raymarine::firmware_from_instance(&s.fullname);
                         {
                             let mut g = self.lock();
                             for a in &addrs {
@@ -289,12 +296,16 @@ impl Discovery {
                         Ok((w, h)) => {
                             info.width = w;
                             info.height = h;
+                            let os_version = info.firmware.clone();
+                            // "Remote control" vs "Viewing only": is the RRC input port listening?
+                            let can_control = raymarine::control_available(addr.ip()).await;
                             Ok(Found {
                                 serial,
                                 model: info.model.clone(),
                                 brand: info.brand().to_string(),
-                                os_version: String::new(),
+                                os_version,
                                 name: Some(info.name.clone()).filter(|s| !s.is_empty()),
+                                can_control,
                                 screen: Some(Screen::Raymarine(info)),
                             })
                         }
@@ -310,6 +321,7 @@ impl Discovery {
                 brand: n.brand().to_string(),
                 os_version: n.firmware.clone(),
                 name: Some(n.name.clone()).filter(|s| !s.is_empty()),
+                can_control: true,
                 screen: Some(Screen::Navico(n)),
             })
         } else if addr.port() == garmin::CONTROL_PORT {
@@ -321,6 +333,7 @@ impl Discovery {
                     // the firmware version lives on the plotter's HTTP app API, not the control port
                     os_version: garmin::build_version(addr.ip()).await.unwrap_or_default(),
                     name: Some(g.name.clone()).filter(|s| !s.is_empty()),
+                    can_control: true,
                     screen: Some(Screen::Garmin(g)),
                 }),
                 Err(e) => Err(e),
@@ -332,6 +345,7 @@ impl Discovery {
                 brand: i.brand,
                 os_version: i.os_version,
                 name: None,
+                can_control: true,
                 screen: None,
             })
         };
@@ -372,6 +386,7 @@ impl Discovery {
                 }
                 p.last_seen = Instant::now();
                 p.os_version = os_version;
+                p.can_control = info.can_control;
                 if name.is_some() {
                     p.name = name;
                 }
@@ -391,6 +406,7 @@ impl Discovery {
                         name,
                         addr,
                         last_seen: Instant::now(),
+                        can_control: info.can_control,
                         screen: info.screen,
                     },
                 );
@@ -426,6 +442,8 @@ struct Found {
     brand: String,
     os_version: String,
     name: Option<String>,
+    /// Whether we can control it, not only view it (a Raymarine unit set to "Viewing only" cannot).
+    can_control: bool,
     screen: Option<Screen>,
 }
 

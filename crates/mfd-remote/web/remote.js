@@ -630,6 +630,9 @@ async function start() {
     for (const e of document.querySelectorAll('.neon-only')) e.hidden = true
     nosKeypad(p.keys ?? [])
   }
+  // the panel's keys and file transfer only work for Navico (NOS) and NEON; the others (Garmin,
+  // Raymarine) have neither, so hide the whole menu for them.
+  if (p.kind !== 'nos' && p.kind !== 'neon') $('more').hidden = true
   $('name').textContent = p.name
   $('gpx').href = `api/plotters/${encodeURIComponent(serial)}/export.gpx`
   $('login-title').textContent = `Password for ${p.name}`

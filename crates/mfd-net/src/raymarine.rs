@@ -31,6 +31,8 @@ pub struct Info {
     pub model: String,
     pub name: String,
     pub serial: String,
+    /// The LightHouse software version, e.g. "4.11.16" (from the mDNS instance name).
+    pub firmware: String,
     pub width: u16,
     pub height: u16,
     pub rtsp_port: u16,
@@ -137,12 +139,38 @@ pub fn info_from_txt(
         },
         model,
         serial: serial.clone(),
+        firmware: String::new(),
         width: 0,
         height: 0,
         rtsp_port: if srv_port != 0 { srv_port } else { RTSP_PORT },
         rtsp_path: path,
     };
     Some((serial, info))
+}
+
+/// The LightHouse version from a Raymarine mDNS instance name like
+/// "RTSP on E70635 0660091 4_11_16._rtsp._tcp.local.": the last space-separated token before the
+/// service type, with `_` turned into `.` (so "4_11_16" -> "4.11.16").
+pub fn firmware_from_instance(fullname: &str) -> String {
+    fullname
+        .split("._")
+        .next()
+        .and_then(|s| s.rsplit(' ').next())
+        .filter(|tok| tok.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(|tok| tok.replace('_', "."))
+        .unwrap_or_default()
+}
+
+/// Whether the Remote Control port is listening (the unit is in "Remote control", not "Viewing
+/// only"). A plain connect that sends nothing: a listening port completes the handshake even when
+/// another controller holds it, so this reports control availability without disturbing that session
+/// (no RRC input is sent). A view-only unit has no listener, so the connect is refused.
+pub async fn control_available(ip: IpAddr) -> bool {
+    let addr = SocketAddr::new(ip, RRC_PORT);
+    matches!(
+        tokio::time::timeout(CONNECT_TIMEOUT, crate::link::connect(addr)).await,
+        Ok(Ok(_))
+    )
 }
 
 /// RTSP `DESCRIBE`s the screen and returns its pixel size from the H.264 SPS. Used to fill in
@@ -336,5 +364,15 @@ mod tests {
         assert_eq!(info.model, "AXIOM PLUS 7 RV");
         assert_eq!(info.rtsp_path, "RAYMARINEMFD");
         assert_eq!(info.rtsp_port, 8554);
+    }
+
+    #[test]
+    fn firmware_from_the_instance_name() {
+        assert_eq!(
+            firmware_from_instance("RTSP on E70635 0660091 4_11_16._rtsp._tcp.local."),
+            "4.11.16"
+        );
+        // an instance with no version token gives nothing, not a bogus value
+        assert_eq!(firmware_from_instance("AXIS P3344._rtsp._tcp.local."), "");
     }
 }

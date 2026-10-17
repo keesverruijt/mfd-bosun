@@ -456,11 +456,13 @@ fn advertise_on<'a>(
 ) -> Option<(&'a Iface, Ipv4Addr)> {
     let mut sorted: Vec<&Iface> = ifaces.iter().filter(|i| i.preferred().is_some()).collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    // Advertise only where there is something to advertise to: an interface a chartplotter announced
+    // itself on, else the sonar's interface. With neither, do not advertise (nothing picks a random
+    // interface, which used to send the tile onto a bridge/VM network nobody is on).
     let pick = sorted
         .iter()
         .find(|i| mfds.iter().any(|a| i.contains(*a)))
-        .or_else(|| sorted.iter().find(|i| Some(i.name.as_str()) == sonar_iface))
-        .or_else(|| sorted.first())?;
+        .or_else(|| sorted.iter().find(|i| Some(i.name.as_str()) == sonar_iface))?;
     // the address in the chartplotter's subnet if it has several
     let same_net = |(a, m): &(Ipv4Addr, Ipv4Addr), b: Ipv4Addr| {
         let m = u32::from(*m);
@@ -526,7 +528,7 @@ mod tests {
             advertise_on(&ifs, &[], Some("wlan0")).unwrap().0.name,
             "wlan0"
         );
-        assert_eq!(advertise_on(&ifs, &[], None).unwrap().0.name, "eth0");
+        assert!(advertise_on(&ifs, &[], None).is_none());
     }
 
     #[test]

@@ -32,7 +32,7 @@ function plotterCard(p) {
     <a class="card" href="remote/?plotter=${s}">
       <span class="dot" title="${p.online ? 'on' : 'not answering'}"></span>
       <span class="what"><b>${esc(p.name)}</b><small>${esc(detail.join(' · '))}</small></span>
-      <span class="go">${p.hasPassword ? 'Screen' : 'Connect'} ›</span>
+      <span class="go">${(p.kind !== 'neon' || p.hasPassword) ? (p.canControl ? 'Screen Control' : 'Screen Viewer') : 'Connect'} ›</span>
     </a>${actions}</li>`
 }
 

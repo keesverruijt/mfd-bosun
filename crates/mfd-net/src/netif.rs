@@ -38,7 +38,9 @@ impl Iface {
     /// Interfaces a Navico network is never on: tunnels and VPNs (by their link type), and the
     /// bridges of containers and VMs (by name, they look like any LAN).
     pub fn is_virtual(&self) -> bool {
-        const PREFIXES: [&str; 6] = ["docker", "veth", "br-", "virbr", "vmnet", "vboxnet"];
+        const PREFIXES: [&str; 7] = [
+            "docker", "veth", "br-", "virbr", "vmnet", "vboxnet", "bridge",
+        ];
         let n = self.name.to_ascii_lowercase();
         !self.lan || PREFIXES.iter().any(|p| n.starts_with(p)) || n.contains("vethernet")
     }

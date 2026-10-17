@@ -1,6 +1,6 @@
 [package]
 name = "mfd-bosun"
-version = "0.1.0"
+version = "0.2.0"
 description = "One program on the boat network for Navico chartplotters (NEON and NOS): their screens in a browser, their waypoints, and ForwardScan"
 edition.workspace = true
 license.workspace = true

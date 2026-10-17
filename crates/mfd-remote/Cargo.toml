@@ -1,6 +1,6 @@
 [package]
 name = "mfd-remote"
-version = "0.1.0"
+version = "0.3.0"
 description = "Remote screen of Navico chartplotters in a browser: the NEON signalling proxy, the NOS bridge, and the page"
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "json
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 if-addrs = "0.15.0"
 log = "0.4.34"
-mfd-net = { version = "0.1.0", path = "../mfd-net" }
+mfd-net = { version = "0.3.0", path = "../mfd-net" }
 # TODO: on our fork for SessionOptions::bind (binds the RTSP source address, needed to reach a
 # link-local-only chartplotter). Once scottlamb/retina#149 is merged and released, switch back to a
 # crates.io version ("0.4" or newer) and delete the keesverruijt/retina fork + branch.

@@ -10,7 +10,7 @@
 //! [`RRC_PORT`] (no control); "Remote control" opens both. Only one controller at a time.
 
 use std::net::{IpAddr, SocketAddr};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::watch;
 
@@ -88,9 +88,17 @@ impl Control {
             .await
             .map_err(|_| std::io::Error::other("no answer from the Remote Control port"))??;
         s.set_nodelay(true)?;
-        let (_r, w) = s.into_split();
-        // reaching the port means control is on; it is exclusive but does not negotiate access.
-        let (_tx, access) = watch::channel(Some(Access::Allowed));
+        let (mut r, w) = s.into_split();
+        // Reaching the port means control is on (it is exclusive, with no further negotiation). Hold
+        // the access sender in a task that reads the connection: the unit sends nothing we need, so a
+        // read ending means it closed the session (another controller took it, or control turned off),
+        // and dropping the sender then tells the bridge.
+        let (tx, access) = watch::channel(None);
+        tokio::spawn(async move {
+            let _ = tx.send(Some(Access::Allowed));
+            let mut buf = [0u8; 256];
+            while matches!(r.read(&mut buf).await, Ok(n) if n > 0) {}
+        });
         Ok(Control { w, access })
     }
 

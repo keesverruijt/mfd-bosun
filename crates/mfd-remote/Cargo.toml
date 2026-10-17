@@ -12,7 +12,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 if-addrs = "0.15.0"
 log = "0.4.34"
 mfd-net = { version = "0.1.0", path = "../mfd-net" }
-retina = "0.4"
+retina = { git = "https://github.com/keesverruijt/retina", branch = "bind-local-address" }
 ring = { version = "0.17.14", default-features = false }
 rust-embed = "8.12.0"
 serde = { version = "1.0.229", features = ["derive"] }

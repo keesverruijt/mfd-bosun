@@ -1994,9 +1994,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "retina"
-version = "0.4.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0eb740f743e678e071628ff6bf84ed5ed03df879997cc3d43b5afef64aff93"
+version = "0.4.21"
+source = "git+https://github.com/keesverruijt/retina?branch=bind-local-address#43477f531a9951fedfb95e9b387ea25ebf21d427"
 dependencies = [
  "base64 0.22.1",
  "bitstream-io",
@@ -2185,12 +2184,14 @@ dependencies = [
 
 [[package]]
 name = "sdp-types"
-version = "0.1.8"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bb6c636ace20de73fb9536017f9ef069b258308a6c341a4aaf3d2fd11afc570"
+checksum = "46d46be065d0565cf5c6703b6ba9f92b0de85b20a4c83f87e110bc0a1040b1bc"
 dependencies = [
  "bstr",
  "fallible-iterator",
+ "hex",
+ "thiserror",
 ]
 
 [[package]]

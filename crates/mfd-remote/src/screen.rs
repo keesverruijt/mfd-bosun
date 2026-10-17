@@ -151,8 +151,18 @@ async fn stream(
         RtspTransport::Tcp => Transport::Tcp(TcpTransportOptions::default()),
         RtspTransport::Udp => Transport::Udp(UdpTransportOptions::default()),
     };
+    // Bind the RTSP connection to a source address on the plotter's subnet; the OS otherwise picks
+    // the wrong one for a link-local-only unit, and retina (like a bare connect) never gets a reply.
+    let bind = url::Url::parse(url)
+        .ok()
+        .as_ref()
+        .and_then(|u| u.host_str())
+        .and_then(|h| h.parse::<std::net::Ipv4Addr>().ok())
+        .and_then(mfd_net::link::source_for)
+        .map(std::net::IpAddr::V4);
     let start = async {
-        let mut s = Session::describe(url::Url::parse(url)?, SessionOptions::default()).await?;
+        let mut s =
+            Session::describe(url::Url::parse(url)?, SessionOptions::default().bind(bind)).await?;
         let video = s
             .streams()
             .iter()

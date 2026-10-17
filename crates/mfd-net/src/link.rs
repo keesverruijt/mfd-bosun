@@ -220,7 +220,7 @@ pub async fn connect(addr: SocketAddr) -> std::io::Result<TcpStream> {
 }
 
 /// A local IPv4 address on the same subnet as `dest`, on a real (non-virtual) interface.
-fn source_for(dest: Ipv4Addr) -> Option<Ipv4Addr> {
+pub fn source_for(dest: Ipv4Addr) -> Option<Ipv4Addr> {
     netif::list()
         .into_iter()
         .filter(|i| !i.is_virtual())

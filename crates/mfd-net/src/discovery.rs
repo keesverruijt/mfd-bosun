@@ -115,6 +115,9 @@ struct Inner {
     /// A Raymarine screen's identity from its mDNS TXT (model/serial/rtsp-path), by address. The probe
     /// to its RTSP port fills in the pixel size and refreshes liveness, but the id is mDNS-only.
     raymarine: BTreeMap<Ipv4Addr, (String, raymarine::Info)>,
+    /// The Raymarine Remote Control service instance names currently advertised (control is on, not
+    /// "Viewing only"). Each name contains the unit's serial, so a probe matches it by substring.
+    rym_rrc: HashSet<String>,
     /// Why the last probe of an address failed, so that it is logged once, not every probe.
     failing: HashMap<SocketAddr, String>,
 }
@@ -137,7 +140,8 @@ impl Discovery {
                 tokio::spawn(d.clone().browse(daemon.clone(), SERVICE_TYPE));
                 tokio::spawn(d.clone().browse(daemon.clone(), nos::SERVICE_TYPE));
                 tokio::spawn(d.clone().browse(daemon.clone(), garmin::SERVICE_TYPE));
-                tokio::spawn(d.clone().browse(daemon, raymarine::SERVICE_TYPE));
+                tokio::spawn(d.clone().browse(daemon.clone(), raymarine::SERVICE_TYPE));
+                tokio::spawn(d.clone().browse(daemon, raymarine::RRC_SERVICE_TYPE));
             }
             Err(e) => {
                 log::warn!("mDNS unavailable, chartplotters will not be found by themselves: {e}")
@@ -225,6 +229,22 @@ impl Discovery {
             }
         };
         while let Ok(ev) = rx.recv_async().await {
+            // The Raymarine Remote Control service is advertised only in "Remote control" mode (not
+            // "Viewing only"); tracking its instance names tells us whether control is available,
+            // without connecting to its port. The name carries the unit's serial, so [`probe`] can
+            // match it.
+            if service == raymarine::RRC_SERVICE_TYPE {
+                match ev {
+                    ServiceEvent::ServiceResolved(s) => {
+                        self.lock().rym_rrc.insert(s.fullname.clone());
+                    }
+                    ServiceEvent::ServiceRemoved(_, fullname) => {
+                        self.lock().rym_rrc.remove(&fullname);
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if let ServiceEvent::ServiceResolved(s) = ev {
                 // routable addresses first: the probe that answers first wins the address
                 let mut addrs: Vec<Ipv4Addr> = s.get_addresses_v4().into_iter().collect();
@@ -297,8 +317,10 @@ impl Discovery {
                             info.width = w;
                             info.height = h;
                             let os_version = info.firmware.clone();
-                            // "Remote control" vs "Viewing only": is the RRC input port listening?
-                            let can_control = raymarine::control_available(addr.ip()).await;
+                            // control is on when the unit advertises its Remote Control service (its
+                            // name carries the serial); "Viewing only" stops advertising it.
+                            let can_control =
+                                self.lock().rym_rrc.iter().any(|f| f.contains(&serial));
                             Ok(Found {
                                 serial,
                                 model: info.model.clone(),

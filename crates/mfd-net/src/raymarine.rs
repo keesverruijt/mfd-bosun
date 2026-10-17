@@ -22,6 +22,9 @@ pub const RRC_PORT: u16 = 50000;
 pub const RTSP_PORT: u16 = 8554;
 /// The mDNS service to browse; a Raymarine screen is one whose TXT has `raymarine-mfd-serial`.
 pub const SERVICE_TYPE: &str = "_rtsp._tcp.local.";
+/// The Remote Control service, advertised only while the unit is in "Remote control" (not "Viewing
+/// only"). Tracking its presence tells us whether control is available, without touching [`RRC_PORT`].
+pub const RRC_SERVICE_TYPE: &str = "_rym_rrc._tcp.local.";
 
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 
@@ -159,18 +162,6 @@ pub fn firmware_from_instance(fullname: &str) -> String {
         .filter(|tok| tok.chars().next().is_some_and(|c| c.is_ascii_digit()))
         .map(|tok| tok.replace('_', "."))
         .unwrap_or_default()
-}
-
-/// Whether the Remote Control port is listening (the unit is in "Remote control", not "Viewing
-/// only"). A plain connect that sends nothing: a listening port completes the handshake even when
-/// another controller holds it, so this reports control availability without disturbing that session
-/// (no RRC input is sent). A view-only unit has no listener, so the connect is refused.
-pub async fn control_available(ip: IpAddr) -> bool {
-    let addr = SocketAddr::new(ip, RRC_PORT);
-    matches!(
-        tokio::time::timeout(CONNECT_TIMEOUT, crate::link::connect(addr)).await,
-        Ok(Ok(_))
-    )
 }
 
 /// RTSP `DESCRIBE`s the screen and returns its pixel size from the H.264 SPS. Used to fill in

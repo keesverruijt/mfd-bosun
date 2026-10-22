@@ -17,8 +17,12 @@
 //!   GET    /api/plotters/{serial}/export.gpx -> its waypoints and routes (and a NOS unit's tracks), as GPX
 //!   GET    /api/plotters/{serial}/backup/{WaypointsRoutesTracks.usr|Settings.set} -> a NOS unit's own backups
 //!   GET    /signal?plotter=<serial>&key=<n> -> WebSocket to the chartplotter's /ws/receiver/<n>
+//!   GET    /signal/furuno?plotter=<serial>  -> WebSocket to a Furuno unit's remote (see [`furuno`])
+//!
+//! A Furuno TimeZero unit shares no screen: its page (`furuno.html`) is a remote control instead.
 
 mod crypto;
+mod furuno;
 mod gpx;
 mod h264;
 mod screen;
@@ -110,6 +114,7 @@ impl Remote {
             .route("/api/plotters/{serial}/export.gpx", get(export_gpx))
             .route("/api/plotters/{serial}/backup/{file}", get(nos_backup))
             .route("/signal", get(signal))
+            .route("/signal/furuno", get(signal_furuno))
             .fallback(get(asset))
             .with_state(self.clone())
     }
@@ -118,11 +123,12 @@ impl Remote {
         &self.discovery
     }
 
-    /// Whether the chartplotter's screen can be opened without asking for a password: a NOS unit needs none.
+    /// Whether the chartplotter's screen can be opened without asking for a password: a NOS unit needs none,
+    /// nor does a Furuno unit's remote.
     pub fn has_password(&self, serial: &str) -> bool {
         self.discovery
             .get(serial)
-            .is_some_and(|p| p.screen.is_some())
+            .is_some_and(|p| p.screen.is_some() || p.furuno.is_some())
             || self.credentials.password(serial).is_some()
     }
 
@@ -586,6 +592,19 @@ async fn signal(
     State(r): State<Remote>,
 ) -> Response {
     ws.on_upgrade(move |socket| r.bridge(socket, q.plotter, q.key))
+}
+
+#[derive(Deserialize)]
+struct FurunoQuery {
+    plotter: String,
+}
+
+async fn signal_furuno(
+    ws: WebSocketUpgrade,
+    Query(q): Query<FurunoQuery>,
+    State(r): State<Remote>,
+) -> Response {
+    ws.on_upgrade(move |socket| furuno::serve(r.discovery, socket, q.plotter))
 }
 
 async fn asset(uri: Uri) -> Response {

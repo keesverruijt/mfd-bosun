@@ -54,7 +54,8 @@ struct Args {
     /// Password for these pages' remote screens (default: none, open to everyone on the network)
     #[arg(long, env = "MFD_BOSUN_PASSWORD", hide_env_values = true)]
     password: Option<String>,
-    /// A chartplotter's address, for when it is not found by itself (mDNS); may be given more than once
+    /// A chartplotter's address, for when it is not found by itself (mDNS, or NavNet for Furuno); may be
+    /// given more than once
     #[arg(long = "plotter", value_name = "IP")]
     plotters: Vec<IpAddr>,
     /// No ForwardScan
@@ -131,6 +132,7 @@ async fn main() {
         discovery.add_address(SocketAddr::new(*ip, mfd_net::api::PORT));
         discovery.add_address(SocketAddr::new(*ip, mfd_net::nos::PORT));
         discovery.add_address(SocketAddr::new(*ip, mfd_net::garmin::CONTROL_PORT));
+        discovery.add_address(SocketAddr::new(*ip, mfd_net::furuno::PORT));
     }
     let remote = Remote::new(
         discovery.clone(),

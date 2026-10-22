@@ -2,7 +2,7 @@
 
 The bosun looks after the boat's gear; this one looks after its chartplotters. mfd-bosun is a small
 program that runs on your boat's network (on a Raspberry Pi, or any laptop) and puts your B&G,
-Simrad, Lowrance, Garmin and Raymarine chartplotters on your phone, tablet or laptop.
+Simrad, Lowrance, Garmin, Raymarine and Furuno chartplotters on your phone, tablet or laptop.
 
 ## What it does
 
@@ -24,6 +24,7 @@ browser plug-ins.
 | B&G, Simrad, Lowrance | Older units (Zeus³, Vulcan, NSS evo3, HDS Live, …) | ✓ | waypoints, routes, tracks | keys, the unit's own backups |
 | Garmin | Units that work with the ActiveCaptain app's Helm (GPSMAP, …) | ✓ | waypoints, routes | |
 | Raymarine | Axiom | ✓ | | |
+| Furuno | TimeZero units (TZMAP, …) | | | remote control, with canboat |
 
 Other models from the same families should work too.
 
@@ -62,6 +63,10 @@ Some chartplotters ask for permission the first time:
   choose **Always**. (*Settings → Wireless → Remote controllers* on the unit can forget it again.)
 - **Raymarine** shows its screen when its *Mobile app access* setting is *Viewing only*, and can be
   controlled when it is *Remote control*.
+- **Furuno** does not share its screen, but mfd-bosun gives it a remote control: the keys, cursor and
+  knob of Furuno's MCU-006 remote. This needs [canboat](https://github.com/canboat/canboat) running
+  `canboat server --quirk mcu006` on the chartplotter's NMEA 2000 network, and the computer running
+  mfd-bosun on the Furuno network (172.31.x.x).
 
 **Add to Home Screen** (Safari's share menu, or Chrome's install menu) turns the page into a
 full-screen app with its own icon.

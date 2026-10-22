@@ -5,7 +5,7 @@ import { Session, sendFile, signalUrl, newClientKey, CLOSE_PASSWORD, CLOSE_UNKNO
 const $ = (id) => document.getElementById(id)
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
-const brands = { bandg: 'B&G', simrad: 'Simrad', lowrance: 'Lowrance', raymarine: 'Raymarine' }
+const brands = { bandg: 'B&G', simrad: 'Simrad', lowrance: 'Lowrance', raymarine: 'Raymarine', furuno: 'Furuno' }
 
 function plotterCard(p) {
   const brand = brands[p.brand] ?? p.brand
@@ -28,11 +28,16 @@ function plotterCard(p) {
     const items = [p.waypoints ? gpx : '', sendFile].filter(Boolean).join('\n      ')
     if (items) actions = `<div class="actions">${items}</div>`
   }
+  // a Furuno unit shares no screen: its page is a remote, through canboat on its NMEA 2000 bus
+  const page = p.kind === 'furuno' ? `remote/furuno.html?plotter=${s}` : `remote/?plotter=${s}`
+  const go = p.kind === 'furuno'
+    ? (p.canControl ? 'Remote' : 'No remote')
+    : (p.kind !== 'neon' || p.hasPassword) ? (p.canControl ? 'Screen Control' : 'Screen Viewer') : 'Connect'
   return `<li class="plotter${p.online ? '' : ' offline'}" data-serial="${esc(p.serial)}">
-    <a class="card" href="remote/?plotter=${s}">
+    <a class="card" href="${page}">
       <span class="dot" title="${p.online ? 'on' : 'not answering'}"></span>
       <span class="what"><b>${esc(p.name)}</b><small>${esc(detail.join(' · '))}</small></span>
-      <span class="go">${(p.kind !== 'neon' || p.hasPassword) ? (p.canControl ? 'Screen Control' : 'Screen Viewer') : 'Connect'} ›</span>
+      <span class="go">${go} ›</span>
     </a>${actions}</li>`
 }
 

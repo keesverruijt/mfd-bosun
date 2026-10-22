@@ -5,6 +5,10 @@
 //! Garmin ones advertise `_garmin-mrn-card._tcp`; a session on their control port tells model and screen
 //! resolution and carries a stable id in the RTSP hostname (see [`crate::garmin`]).
 //!
+//! Furuno TimeZero ones answer the NavNet discovery requests on UDP 10010, with what is on their NMEA 2000
+//! bus; they can be driven through a canboat running the `mcu006` quirk on that bus, which advertises
+//! `_canboat._tcp` (see [`crate::furuno`] and [`crate::canboat`]).
+//!
 //! Chartplotters are keyed by serial number. Every known one is probed again now and then; one that has not
 //! answered for [`OFFLINE_AFTER`] shows as offline, and is forgotten after [`FORGET_AFTER`]. Addresses can
 //! also be given by hand ([`Discovery::add_address`]), for a network where mDNS does not pass.
@@ -17,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
-use crate::{api, garmin, nos, raymarine, screen::Screen};
+use crate::{api, canboat, furuno, garmin, nos, raymarine, screen::Screen};
 
 pub const SERVICE_TYPE: &str = "_neonapi._tcp.local.";
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
@@ -41,6 +45,8 @@ pub struct Plotter {
     /// A remote-screen plotter (NOS or Garmin): what its probe learned. `None` for a NEON unit, whose
     /// browser does the WebRTC itself.
     pub screen: Option<Screen>,
+    /// A Furuno TimeZero unit: no screen to share, but maybe a remote to drive it with.
+    pub furuno: Option<furuno::Info>,
 }
 
 impl Plotter {
@@ -60,9 +66,10 @@ pub struct PlotterView {
     pub name: String,
     pub address: String,
     pub online: bool,
-    /// "neon", "nos", "garmin" or "raymarine"
+    /// "neon", "nos", "garmin", "raymarine" or "furuno"
     pub kind: &'static str,
-    /// Its screen can be controlled, not only viewed (false for a Raymarine unit in "Viewing only").
+    /// Its screen can be controlled, not only viewed (false for a Raymarine unit in "Viewing only"); for a
+    /// Furuno unit, which shows no screen, that a canboat MCU-006 remote is on its bus.
     pub can_control: bool,
     /// Its waypoints and routes can be exported as GPX (NEON over its REST API, NOS from its own backup,
     /// Garmin off its user-data bus).
@@ -80,6 +87,7 @@ impl From<&Plotter> for PlotterView {
         // file drops; NOS gives its waypoints as its own backup but takes no files; Garmin gives its
         // waypoints and routes off its user-data bus but takes no files.
         let (waypoints, files) = match &p.screen {
+            None if p.furuno.is_some() => (false, false),
             None => (true, true),
             Some(Screen::Navico(_)) => (true, false),
             Some(Screen::Garmin(_)) => (true, false),
@@ -94,7 +102,11 @@ impl From<&Plotter> for PlotterView {
             name: p.name.clone().unwrap_or_else(|| p.model.clone()),
             address: p.addr.ip().to_string(),
             online: p.online(),
-            kind: p.screen.as_ref().map(|s| s.kind()).unwrap_or("neon"),
+            kind: match (&p.screen, &p.furuno) {
+                (Some(s), _) => s.kind(),
+                (None, Some(_)) => "furuno",
+                (None, None) => "neon",
+            },
             can_control: p.can_control,
             waypoints,
             files,
@@ -120,6 +132,21 @@ struct Inner {
     rym_rrc: HashSet<String>,
     /// Why the last probe of an address failed, so that it is logged once, not every probe.
     failing: HashMap<SocketAddr, String>,
+    /// What each address told over NavNet (Furuno).
+    navnet: HashMap<Ipv4Addr, Heard>,
+    /// Addresses given by hand to send the NavNet requests to, as well as broadcasting them.
+    navnet_targets: HashSet<Ipv4Addr>,
+    /// The canboat servers advertised, by mDNS instance name.
+    canboat: HashMap<String, canboat::Server>,
+}
+
+/// What a Furuno unit said over NavNet: its name, itself, and its NMEA 2000 bus device by device, each with
+/// when it was last reported (a device that leaves the bus stops being reported).
+#[derive(Default)]
+struct Heard {
+    beacon: Option<String>,
+    unit: Option<([u8; 6], furuno::Device)>,
+    bus: BTreeMap<u8, (furuno::Device, Instant)>,
 }
 
 #[derive(Clone)]
@@ -141,13 +168,18 @@ impl Discovery {
                 tokio::spawn(d.clone().browse(daemon.clone(), nos::SERVICE_TYPE));
                 tokio::spawn(d.clone().browse(daemon.clone(), garmin::SERVICE_TYPE));
                 tokio::spawn(d.clone().browse(daemon.clone(), raymarine::SERVICE_TYPE));
-                tokio::spawn(d.clone().browse(daemon, raymarine::RRC_SERVICE_TYPE));
+                tokio::spawn(
+                    d.clone()
+                        .browse(daemon.clone(), raymarine::RRC_SERVICE_TYPE),
+                );
+                tokio::spawn(d.clone().browse(daemon, canboat::SERVICE_TYPE));
             }
             Err(e) => {
                 log::warn!("mDNS unavailable, chartplotters will not be found by themselves: {e}")
             }
         }
         tokio::spawn(d.clone().probe_all());
+        tokio::spawn(d.clone().navnet());
         d
     }
 
@@ -155,8 +187,15 @@ impl Discovery {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Probe this address too, from now on.
+    /// Probe this address too, from now on. On the NavNet port, that is: send it the Furuno discovery
+    /// requests too.
     pub fn add_address(&self, addr: SocketAddr) {
+        if addr.port() == furuno::PORT {
+            if let IpAddr::V4(ip) = addr.ip() {
+                self.lock().navnet_targets.insert(ip);
+            }
+            return;
+        }
         if self.lock().candidates.insert(addr) {
             tokio::spawn(self.clone().probe(addr));
         }
@@ -243,6 +282,26 @@ impl Discovery {
                     }
                     _ => {}
                 }
+                continue;
+            }
+            // A canboat server: what it says of itself is all there is to know, no probe needed.
+            if service == canboat::SERVICE_TYPE {
+                match ev {
+                    ServiceEvent::ServiceResolved(s) => {
+                        let txt = |k: &str| s.get_property_val_str(k).map(str::to_string);
+                        let server = canboat::Server::from_txt(
+                            txt,
+                            s.get_addresses_v4().into_iter().collect(),
+                        );
+                        log::debug!("mDNS: {} is {server:?}", s.fullname);
+                        self.lock().canboat.insert(s.fullname.clone(), server);
+                    }
+                    ServiceEvent::ServiceRemoved(_, fullname) => {
+                        self.lock().canboat.remove(&fullname);
+                    }
+                    _ => continue,
+                }
+                self.find_remotes();
                 continue;
             }
             if let ServiceEvent::ServiceResolved(s) = ev {
@@ -430,6 +489,7 @@ impl Discovery {
                         last_seen: Instant::now(),
                         can_control: info.can_control,
                         screen: info.screen,
+                        furuno: None,
                     },
                 );
                 true
@@ -455,6 +515,178 @@ impl Discovery {
             log::debug!("{what} connection to {addr}: {why}");
         }
     }
+}
+
+impl Discovery {
+    /// Sends the NavNet discovery requests now and then, and keeps what the Furuno units answer.
+    async fn navnet(self) {
+        let sender = match furuno::sender() {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("Furuno chartplotters will not be found: {e}");
+                return;
+            }
+        };
+        let listener = furuno::listener()
+            .inspect_err(|e| log::warn!("NavNet: cannot listen on UDP {}: {e}", furuno::PORT))
+            .ok();
+        let mut tick = tokio::time::interval(PROBE_INTERVAL);
+        let (mut a, mut b) = ([0u8; 2048], [0u8; 2048]);
+        loop {
+            let heard = tokio::select! {
+                _ = tick.tick() => {
+                    let mut to = furuno::broadcasts();
+                    to.extend(self.lock().navnet_targets.iter().copied());
+                    for ip in to {
+                        for r in furuno::requests() {
+                            let addr = SocketAddr::new(IpAddr::V4(ip), furuno::PORT);
+                            if let Err(e) = sender.send_to(&r, addr).await {
+                                log::debug!("NavNet request to {ip}: {e}");
+                            }
+                        }
+                    }
+                    continue;
+                }
+                r = sender.recv_from(&mut a) => r.map(|(n, from)| (from, &a[..n])),
+                r = async {
+                    match &listener {
+                        Some(l) => l.recv_from(&mut b).await,
+                        None => std::future::pending().await,
+                    }
+                } => r.map(|(n, from)| (from, &b[..n])),
+            };
+            match heard {
+                Ok((SocketAddr::V4(from), p)) => {
+                    if let Some(report) = furuno::parse(p) {
+                        self.heard(*from.ip(), report);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::debug!("NavNet: {e}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    /// A NavNet report from `ip`: a TimeZero MFD is listed once it has named itself and reported itself.
+    fn heard(&self, ip: Ipv4Addr, report: furuno::Report) {
+        let mut g = self.lock();
+        let h = g.navnet.entry(ip).or_default();
+        match report {
+            furuno::Report::Beacon(name) => h.beacon = Some(name),
+            furuno::Report::Unit { mac, device } => h.unit = Some((mac, device)),
+            furuno::Report::Bus { index, device } => {
+                h.bus.insert(index, (device, Instant::now()));
+            }
+        }
+        h.bus.retain(|_, (_, at)| at.elapsed() < OFFLINE_AFTER);
+        let (Some(beacon), Some((mac, unit))) = (&h.beacon, &h.unit) else {
+            return;
+        };
+        if !furuno::is_mfd(beacon) {
+            return;
+        }
+        let mut info = furuno::Info {
+            model: unit.model.clone(),
+            firmware: furuno::version(&unit.firmware),
+            serial: unit.serial.clone(),
+            mac: *mac,
+            bus: h.bus.values().map(|(d, _)| d.clone()).collect(),
+            remote: None,
+        };
+        info.remote = remote_for(&info, g.canboat.values());
+        let addr = SocketAddr::new(IpAddr::V4(ip), furuno::PORT);
+        let id = info.id();
+        let changed = match g.plotters.get_mut(&id) {
+            Some(p) => {
+                let changed = !p.online() || p.addr != addr || p.furuno.as_ref() != Some(&info);
+                p.addr = addr;
+                p.last_seen = Instant::now();
+                p.os_version = info.firmware.clone();
+                p.can_control = info.remote.is_some();
+                p.furuno = Some(info);
+                changed
+            }
+            None => {
+                log::info!("Furuno {} ({id}) at {ip}", info.model);
+                g.plotters.insert(
+                    id.clone(),
+                    Plotter {
+                        serial: id,
+                        model: info.model.clone(),
+                        brand: info.brand().to_string(),
+                        os_version: info.firmware.clone(),
+                        name: None,
+                        addr,
+                        last_seen: Instant::now(),
+                        can_control: info.remote.is_some(),
+                        screen: None,
+                        furuno: Some(info),
+                    },
+                );
+                true
+            }
+        };
+        drop(g);
+        if changed {
+            self.changed.send_replace(());
+        }
+    }
+
+    /// The canboat servers changed: which Furuno unit each remote is for may have too.
+    fn find_remotes(&self) {
+        let mut g = self.lock();
+        let Inner {
+            plotters, canboat, ..
+        } = &mut *g;
+        let mut changed = false;
+        for p in plotters.values_mut() {
+            if let Some(info) = &mut p.furuno {
+                let remote = remote_for(info, canboat.values());
+                if remote != info.remote {
+                    log::info!(
+                        "Furuno {} ({}): {}",
+                        info.model,
+                        p.serial,
+                        match remote {
+                            Some(a) => format!("remote control through canboat at {a}"),
+                            None => "no remote control".into(),
+                        }
+                    );
+                    info.remote = remote;
+                    p.can_control = remote.is_some();
+                    changed = true;
+                }
+            }
+        }
+        drop(g);
+        if changed {
+            self.changed.send_replace(());
+        }
+    }
+}
+
+/// The MCU-006 control port for a TimeZero MFD: of a canboat running the `mcu006` quirk that the MFD lists
+/// on its bus (by the serial number canboat gives itself there), when the MFD lists an MCU-006 too. A canboat
+/// that advertises no serial number is taken only when it is the one remote there is.
+fn remote_for<'a>(
+    info: &furuno::Info,
+    servers: impl Iterator<Item = &'a canboat::Server>,
+) -> Option<SocketAddr> {
+    if !info.has_mcu006() {
+        return None;
+    }
+    let remotes: Vec<&canboat::Server> = servers.filter(|s| s.mcu006_addr().is_some()).collect();
+    remotes
+        .iter()
+        .find(|s| !s.serial.is_empty() && info.has_canboat(&s.serial))
+        .or(match remotes.as_slice() {
+            [only] if only.serial.is_empty() => Some(only),
+            _ => None,
+        })
+        .and_then(|s| s.mcu006_addr())
 }
 
 /// What a probe found.
@@ -493,5 +725,64 @@ async fn futures_join_all(
     let handles: Vec<_> = fs.into_iter().map(tokio::spawn).collect();
     for h in handles {
         let _ = h.await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tzmap(bus: &[(&str, &str)]) -> furuno::Info {
+        furuno::Info {
+            model: "TZMAP9".into(),
+            firmware: "26.11".into(),
+            serial: "100213-100615".into(),
+            mac: [0x00, 0xd0, 0x1d, 0xbb, 0x81, 0x59],
+            bus: bus
+                .iter()
+                .map(|(model, serial)| furuno::Device {
+                    model: model.to_string(),
+                    firmware: String::new(),
+                    description: String::new(),
+                    serial: serial.to_string(),
+                })
+                .collect(),
+            remote: None,
+        }
+    }
+
+    fn server(serial: &str, ip: [u8; 4]) -> canboat::Server {
+        canboat::Server {
+            addrs: vec![ip.into()],
+            serial: serial.into(),
+            mcu006: Some(2607),
+        }
+    }
+
+    #[test]
+    fn the_remote_is_the_canboat_on_its_bus() {
+        let on_bus = tzmap(&[("CANboat", "65263"), ("MCU-006", "0000")]);
+        let servers = [
+            server("1", [172, 31, 3, 1]),
+            server("65263", [172, 31, 3, 150]),
+        ];
+        assert_eq!(
+            remote_for(&on_bus, servers.iter()),
+            Some("172.31.3.150:2607".parse().unwrap())
+        );
+        // no MCU-006 on its bus: canboat runs no remote there (yet)
+        let no_remote = tzmap(&[("CANboat", "65263")]);
+        assert_eq!(remote_for(&no_remote, servers.iter()), None);
+        // a canboat on another bus
+        assert_eq!(remote_for(&on_bus, servers[..1].iter()), None);
+    }
+
+    #[test]
+    fn a_lone_canboat_without_a_serial_will_do() {
+        let on_bus = tzmap(&[("MCU-006", "0000")]);
+        let anonymous = [server("", [172, 31, 3, 150])];
+        assert!(remote_for(&on_bus, anonymous.iter()).is_some());
+        let two = [server("", [172, 31, 3, 150]), server("", [172, 31, 3, 151])];
+        assert_eq!(remote_for(&on_bus, two.iter()), None);
     }
 }

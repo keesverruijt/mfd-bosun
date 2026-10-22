@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>Remote</title>
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../favicon.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="remote.css">
+<link rel="stylesheet" href="furuno.css">
+</head>
+<body>
+<header id="bar">
+  <a id="back" href="../" title="Chartplotters" aria-label="Chartplotters">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  <div id="title"><b id="name">Remote</b><span id="status">…</span></div>
+</header>
+
+<main id="remote">
+  <!-- The MCU-006's cursor pad: drag to move the cursor, tap to select, two fingers (or a mouse wheel) turn
+       the knob. -->
+  <div id="pad">
+    <span id="hint">Drag to move the cursor · tap to select · two fingers to zoom</span>
+  </div>
+
+  <div id="knob">
+    <button type="button" data-knob="-1" aria-label="Turn the knob left (zoom out)">−</button>
+    <button type="button" id="push" aria-label="Push the knob (select)">Push</button>
+    <button type="button" data-knob="1" aria-label="Turn the knob right (zoom in)">+</button>
+    <button type="button" id="keypad" aria-pressed="false" title="The remote's CURS/SCROLL button">CURS</button>
+  </div>
+
+  <!-- The remote's keys, by the keyboard key each sends. Held past a second, a key does its second thing. -->
+  <div id="keys">
+    <button type="button" data-key="1"><b>Home</b><small>Settings</small></button>
+    <button type="button" data-key="2"><b>Event</b><small>GOTO</small></button>
+    <button type="button" data-key="F5"><b>Cancel</b><small>MOB</small></button>
+    <button type="button" data-key="3"><b>NAV INFO</b><small>F1</small></button>
+    <button type="button" data-key="4"><b>Gain</b><small>F2</small></button>
+    <button type="button" data-key="F4"><b>AUTO/STBY</b><small>&nbsp;</small></button>
+    <button type="button" data-key="F8"><b>Window</b><small>Full screen</small></button>
+    <button type="button" data-key="F12"><b>Edge</b><small>Switch MFD</small></button>
+    <button type="button" data-key="y"><b>Brill</b><small>&nbsp;</small></button>
+  </div>
+  <p id="legend">Tap a key; hold it for what is under it.</p>
+</main>
+
+<script type="module" src="furuno.js"></script>
+</body>
+</html>

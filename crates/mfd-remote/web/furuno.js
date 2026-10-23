@@ -3,6 +3,8 @@
 //   {"key":"F5","down":true}  {"pointer":{"dx":40,"dy":-10}}  {"knob":-1}  {"click":true}  {"keypad":true}
 //   {"status":true} -> { ok, host, keypad, … }: host is the MFD the remote is paired with, null before that
 // A key is held for as long as it is pressed here, so the unit itself tells a tap from a long press.
+// CURS/SCRL switches what the joystick does, moving the cursor or panning: it is the same joystick report,
+// with keypad mode on.
 
 const $ = (id) => document.getElementById(id)
 const statusEl = $('status')
@@ -18,6 +20,9 @@ const LONG_MS = 1000
 const TAP_SLOP = 6
 // two-finger drag per knob detent
 const DETENT_PX = 24
+// an arrow held in SCROLL mode: so far, this often
+const PAN_STEP = 12
+const PAN_MS = 60
 
 let ws = null
 let retry = null
@@ -134,12 +139,38 @@ let keypad = false
 function setKeypad(on) {
   keypad = !!on
   $('keypad').setAttribute('aria-pressed', String(keypad))
-  $('keypad').textContent = keypad ? 'SCROLL' : 'CURS'
+  $('keypad-mode').textContent = keypad ? 'Scroll' : 'Cursor'
+  remote.classList.toggle('scroll', keypad)
+  $('hint').textContent = keypad
+    ? 'Drag or hold an arrow to pan · tap to push · two fingers to zoom'
+    : 'Drag to move the cursor · tap to push · two fingers to zoom'
 }
 $('keypad').addEventListener('click', () => {
   setKeypad(!keypad)
   send({ keypad })
 })
+
+// SCROLL mode's arrows: the joystick held over, for as long as one is pressed
+for (const b of document.querySelectorAll('.arrow')) {
+  let timer = null
+  const step = () => send({ pointer: { dx: Number(b.dataset.dx) * PAN_STEP, dy: Number(b.dataset.dy) * PAN_STEP } })
+  const up = () => {
+    clearInterval(timer)
+    timer = null
+    b.classList.remove('held')
+  }
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    e.stopPropagation() // not a touch on the pad itself
+    b.setPointerCapture(e.pointerId)
+    b.classList.add('held')
+    step()
+    clearInterval(timer)
+    timer = setInterval(step, PAN_MS)
+  })
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, up)
+  b.addEventListener('contextmenu', (e) => e.preventDefault())
+}
 
 // --- the cursor pad ---
 

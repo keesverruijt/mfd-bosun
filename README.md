@@ -30,25 +30,35 @@ Other models from the same families should work too.
 
 ## Getting started
 
-### On a Raspberry Pi
+### Install
 
-With 64-bit Raspberry Pi OS:
-
-```sh
-curl -L https://keversoft.com/downloads/mfd-bosun/latest/mfd-bosun-aarch64-unknown-linux-musl.tar.gz | tar xz
-sudo mfd-bosun-aarch64-unknown-linux-musl/install.sh
-```
-
-This installs mfd-bosun as a service that starts with the Pi. To update, run the same two lines
-again. For 32-bit Raspberry Pi OS use `mfd-bosun-armv7-unknown-linux-musleabihf` instead, and
-`x86_64-unknown-linux-musl` for a Linux PC. Settings go in `/etc/default/mfd-bosun`; to see what it is
-doing, run `journalctl -u mfd-bosun -f`.
-
-### On a laptop
+On a Raspberry Pi, a Linux PC or a Mac, in a terminal:
 
 ```sh
-./mfd-bosun
+curl -fsSL https://keversoft.com/downloads/mfd-bosun/latest/install.sh | sh
 ```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://keversoft.com/downloads/mfd-bosun/latest/install.ps1 | iex
+```
+
+To update, run the same line again.
+
+**On Linux** (any Raspberry Pi but the first Pi and the first Pi Zero, or a PC) this installs mfd-bosun as a service that starts with the computer. Settings go in
+`/etc/default/mfd-bosun`; to see what it is doing, run `journalctl -u mfd-bosun -f`.
+
+**On a Mac or Windows** it installs the `mfd-bosun` command; run it when you are on the boat:
+
+```sh
+mfd-bosun
+```
+
+Rather download it yourself? The builds are all in `https://keversoft.com/downloads/mfd-bosun/latest/`:
+`mfd-bosun-macos`, `mfd-bosun-windows-x86_64.exe`, and for Linux
+`mfd-bosun-<target>.tar.gz` (`aarch64-unknown-linux-musl`, `armv7-unknown-linux-musleabihf` or
+`x86_64-unknown-linux-musl`), with an `install.sh` inside that sets up the service.
 
 ### Using it
 

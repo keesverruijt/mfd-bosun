@@ -17,7 +17,8 @@ install -m 755 mfd-bosun /usr/local/bin/mfd-bosun
 if [ -e /etc/default/mfd-bosun ]; then
   echo "keeping /etc/default/mfd-bosun"
 else
-  # it may hold a password
+  # it may hold a password; not every distribution has /etc/default
+  install -d /etc/default
   install -m 600 mfd-bosun.default /etc/default/mfd-bosun
 fi
 

@@ -108,8 +108,11 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      # the one-line installers, which fetch the builds next to them (see README.md)
       - run: |
           git log -1 --format='%H %cI %s' > out/BUILD
+          cp packaging/get.sh out/install.sh
+          cp packaging/get.ps1 out/install.ps1
       - env:
           KEY: ${{ secrets.PUBLISH_SSH_KEY }}
         run: |

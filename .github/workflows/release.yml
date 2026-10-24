@@ -102,6 +102,8 @@ jobs:
           name: windows
           path: '*-windows-x86_64.exe'
 
+  # A v* tag makes a GitHub release; the one-line installers fetch from the latest one, by default:
+  #   https://github.com/keesverruijt/mfd-bosun/releases/latest/download/<file>
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux, macos, windows]
@@ -109,17 +111,54 @@ jobs:
     permissions:
       contents: write # attach the builds to the GitHub release
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          path: out
           merge-multiple: true
+      - run: |
+          cp packaging/get.sh out/install.sh
+          cp packaging/get.ps1 out/install.ps1
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            mfd-bosun-*
+          generate_release_notes: true
+          files: out/*
+
+  # Every build of main, as the pre-release `nightly`, its tag moved to this commit. The installers fetch
+  # from it with MFD_BOSUN_NIGHTLY=1; releases/latest skips pre-releases.
+  nightly:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'keesverruijt/mfd-bosun'
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # move the nightly tag, replace the pre-release's builds
+    concurrency: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - run: |
+          git log -1 --format='%H %cI %s' > out/BUILD
+          cp packaging/get.sh out/install.sh
+          cp packaging/get.ps1 out/install.ps1
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -f nightly
+          git push -f origin refs/tags/nightly
+          notes="The latest build of main, $(git log -1 --format='%h: %s'). Install it with MFD_BOSUN_NIGHTLY=1, see README.md."
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --prerelease --notes "$notes"
+          else
+            gh release create nightly --prerelease --title nightly --notes "$notes"
+          fi
+          gh release upload nightly out/* --clobber
 
   publish:
-    # Every build of main, to keversoft.com: the key may only write there, into one web directory
-    # (rrsync on the server), whose URL is known only to whom it is given.
+    # Every build of main, to keversoft.com too, for the download lines given out before the GitHub
+    # releases: the key may only write there, into one web directory (rrsync on the server).
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'keesverruijt/mfd-bosun'
     needs: [linux, macos, windows]
     runs-on: ubuntu-latest
@@ -129,11 +168,8 @@ jobs:
         with:
           path: out
           merge-multiple: true
-      # the one-line installers, which fetch the builds next to them (see README.md)
       - run: |
           git log -1 --format='%H %cI %s' > out/BUILD
-          cp packaging/get.sh out/install.sh
-          cp packaging/get.ps1 out/install.ps1
       - env:
           KEY: ${{ secrets.PUBLISH_SSH_KEY }}
         run: |

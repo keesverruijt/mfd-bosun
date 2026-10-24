@@ -35,19 +35,21 @@ Other models from the same families should work too.
 On a Raspberry Pi, a Linux PC or a Mac, in a terminal:
 
 ```sh
-curl -fsSL https://keversoft.com/downloads/mfd-bosun/latest/install.sh | sh
+curl -fsSL https://github.com/keesverruijt/mfd-bosun/releases/latest/download/install.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://keversoft.com/downloads/mfd-bosun/latest/install.ps1 | iex
+irm https://github.com/keesverruijt/mfd-bosun/releases/latest/download/install.ps1 | iex
 ```
 
-To update, run the same line again.
+To update, run the same line again. This installs the latest release; to try the latest build of the
+code instead, end the line with `| MFD_BOSUN_NIGHTLY=1 sh` (on Windows, run `$env:MFD_BOSUN_NIGHTLY = 1`
+first).
 
-**On Linux** (any Raspberry Pi but the first Pi and the first Pi Zero, or a PC) this installs mfd-bosun as a service that starts with the computer. Settings go in
-`/etc/default/mfd-bosun`; to see what it is doing, run `journalctl -u mfd-bosun -f`.
+**On Linux** (any Raspberry Pi but the first Pi and the first Pi Zero, or a PC) this installs mfd-bosun
+as a service that starts with the computer. Settings go in `/etc/default/mfd-bosun`; to see what it is doing, run `journalctl -u mfd-bosun -f`.
 
 **On a Mac or Windows** it installs the `mfd-bosun` command; run it when you are on the boat:
 
@@ -55,7 +57,7 @@ To update, run the same line again.
 mfd-bosun
 ```
 
-Rather download it yourself? The builds are all in `https://keversoft.com/downloads/mfd-bosun/latest/`:
+Rather download it yourself? Each [release](https://github.com/keesverruijt/mfd-bosun/releases) has
 `mfd-bosun-macos`, `mfd-bosun-windows-x86_64.exe`, and for Linux
 `mfd-bosun-<target>.tar.gz` (`aarch64-unknown-linux-musl`, `armv7-unknown-linux-musleabihf` or
 `x86_64-unknown-linux-musl`), with an `install.sh` inside that sets up the service.

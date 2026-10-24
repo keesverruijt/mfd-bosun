@@ -1,12 +1,18 @@
 #!/bin/sh
 # One-line install of the latest mfd-bosun, on Linux (a Raspberry Pi or a PC) and macOS:
-#   curl -fsSL https://keversoft.com/downloads/mfd-bosun/latest/install.sh | sh
-# Published as install.sh next to the builds (see .github/workflows/release.yml). On Linux it fetches
-# the release archive for this machine and runs the install.sh in it, which sets up the systemd service;
-# on macOS it puts the binary in /usr/local/bin. Run it again to update.
+#   curl -fsSL https://github.com/keesverruijt/mfd-bosun/releases/latest/download/install.sh | sh
+# Attached as install.sh to each GitHub release (see .github/workflows/release.yml); MFD_BOSUN_NIGHTLY=1
+# installs the latest build of main instead. On Linux it fetches the release archive for this machine and
+# runs the install.sh in it, which sets up the systemd service; on macOS it puts the binary in
+# /usr/local/bin. Run it again to update.
 set -eu
 
-URL=${MFD_BOSUN_URL:-https://keversoft.com/downloads/mfd-bosun/latest}
+REPO=https://github.com/keesverruijt/mfd-bosun/releases
+if [ -n "${MFD_BOSUN_NIGHTLY:-}" ]; then
+  URL=${MFD_BOSUN_URL:-$REPO/download/nightly}
+else
+  URL=${MFD_BOSUN_URL:-$REPO/latest/download}
+fi
 
 fail() {
   echo "mfd-bosun: $*" >&2

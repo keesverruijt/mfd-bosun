@@ -67,9 +67,9 @@ on the boat's network. The page lists the chartplotters it has found; tap one.
 
 Some chartplotters ask for permission the first time:
 
-- **Newer B&G and Simrad units** ask for **that chartplotter's WiFi password** (each unit can have
+- **B&G and Simrad NEON units** ask for **that chartplotter's WiFi password** (each unit can have
   its own). mfd-bosun remembers it, so after that one tap is enough, from any device.
-- **Older B&G, Simrad and Lowrance units** ask on their own screen whether to allow "MFD Bosun":
+- **B&G, Simrad and Lowrance NOS units** ask on their own screen whether to allow "MFD Bosun":
   choose **Always**. (*Settings → Wireless → Remote controllers* on the unit can forget it again.)
 - **Raymarine** shows its screen when its *Mobile app access* setting is *Viewing only*, and can be
   controlled when it is *Remote control*.
@@ -98,7 +98,7 @@ The most useful ones (`--help` shows them all):
 ## Security
 
 Most chartplotters do little to protect their screen: anyone on the boat's network can watch it,
-and often control it, with or without mfd-bosun. The newer B&G and Simrad units are protected by
+and often control it, with or without mfd-bosun. The B&G and Simrad NEON units are protected by
 their WiFi password, but mfd-bosun remembers those passwords, so anyone who can open its page can
 control those chartplotters too.
 

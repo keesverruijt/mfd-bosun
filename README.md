@@ -20,8 +20,8 @@ browser plug-ins.
 
 | Brand | Models | Remote screen | GPX download | Also |
 |---|---|---|---|---|
-| B&G, Simrad | Newer units (Zeus S, Zeus SR, Zeus SRX, NSS 4, …) | ✓ | waypoints, routes | keys, send a file |
-| B&G, Simrad, Lowrance | Older units (Zeus³, Vulcan, NSS evo3, HDS Live, …) | ✓ | waypoints, routes, tracks | keys, the unit's own backups |
+| B&G, Simrad | NEON units (Zeus S, Zeus SR, Zeus SRX, NSS 4, …) | ✓ | waypoints, routes | keys, send a file |
+| B&G, Simrad, Lowrance | NOS units (Zeus³, Vulcan, NSS evo3, HDS Live, …) | ✓ | waypoints, routes, tracks | keys, the unit's own backups |
 | Garmin | Units that work with the ActiveCaptain app's Helm (GPSMAP, …) | ✓ | waypoints, routes | |
 | Raymarine | Axiom | ✓ | | |
 | Furuno | TimeZero units (TZMAP, …) | | | remote control, with canboat |

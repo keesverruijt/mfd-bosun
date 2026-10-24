@@ -1,0 +1,106 @@
+# CodeRabbit configuration. Schema:
+#   https://coderabbit.ai/integrations/schema.v2.json
+#
+# mfd-bosun talks to chartplotters over reverse-engineered protocols: most of what a reviewer can add is
+# checking a change against what the units actually do on the wire, and against the people who run it,
+# who are boat owners rather than Unix users.
+
+language: en-US
+
+reviews:
+  # Comment where it matters rather than on every diff hunk.
+  profile: chill
+  # Advisory only: a bot must not hold a maintainer's PR closed.
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_title_keywords:
+      - "[skip review]"
+      - "[WIP]"
+
+  path_filters:
+    - "!Cargo.lock"
+    - "!target/**"
+    # A patched third-party crate, see vendor/README.md.
+    - "!vendor/**"
+
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Comments explain why, not what; flag a comment that only restates
+        the code, or that describes an approach the PR has since dropped.
+
+        Commits and PR descriptions carry AI-attribution trailers on
+        purpose; do not flag them.
+
+    - path: "crates/mfd-net/src/**"
+      instructions: |
+        The chartplotters' protocols (NEON REST and signalling, NOS remote
+        control, Garmin, Raymarine, Furuno over NavNet and canboat) are
+        reverse-engineered. Replies come from firmware we may not have
+        seen: watch for indexing past a payload, unchecked lengths, byte
+        order, and a panic on unexpected input. An unexplained byte is
+        unknown, not guessed at. Anything sent to a unit acts on real
+        equipment on a boat: check it cannot be sent twice, to the wrong
+        unit, or without the user asking. The stored WiFi passwords
+        (credentials.rs) must not end up in logs or in a reply to the page.
+
+    - path: "crates/mfd-remote/src/**"
+      instructions: |
+        This is the remote screen: pairing, the WebRTC signalling relay,
+        H.264 handling and the input a browser sends to a chartplotter.
+        Input from the page drives a unit at the helm; flag a change that
+        could pass it on unchecked or to a unit the viewer did not open.
+
+    - path: "crates/neon-forwardscan/src/**"
+      instructions: |
+        ForwardScan settings changes go to a sonar on the boat, and the
+        advertisement puts a tile on every chartplotter on the network.
+        Flag a change that could raise the advertisement or request rate,
+        or change settings when --read-only is set.
+
+    - path: "crates/*/web/**"
+      instructions: |
+        Pages served to phones and tablets on the boat, often as a
+        home-screen app, without a build step. Check they work in Safari
+        on iOS as well as Chrome, and at phone width.
+
+    - path: "crates/mfd-bosun/src/**"
+      instructions: |
+        main.rs wires the crates together; auth.rs is the --password
+        check that keeps the page (and the chartplotters whose passwords
+        it remembers) to its owner. Flag a remote-screen or plotter-list
+        route, or WebSocket, reachable without it when a password is set.
+        ForwardScan stays open on purpose: the chartplotters show it and
+        cannot log in.
+
+    - path: "packaging/**"
+      instructions: |
+        get.sh is piped into sh on a Raspberry Pi, a Linux PC or a Mac, and
+        get.ps1 into PowerShell on Windows: they must stay POSIX sh and
+        Windows PowerShell 5.1 respectively, fail clearly, and be safe to
+        run again to update. install.sh must keep an existing
+        /etc/default/mfd-bosun.
+
+    - path: "**/*.md"
+      instructions: |
+        README.md is read by boat owners who are not developers: flag
+        jargon without explanation, commands that are not copy-pasteable,
+        and steps that assume a Unix habit.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        Release binaries are built here, including static musl Linux builds
+        for Raspberry Pi, and every build of main is published to the
+        download location the one-line installers fetch from. Flag a change
+        that would make a Linux binary depend on the runner's glibc or a
+        system library, drop a target the installers fetch, or stop
+        publishing install.sh or install.ps1.
+
+chat:
+  auto_reply: true

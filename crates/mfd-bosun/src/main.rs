@@ -1,36 +1,13 @@
 //! mfd-bosun: one program on the boat's network for the Navico chartplotters, NEON and the older NOS. It
 //! finds them, shows their screens in a browser (to view and control them from a phone, tablet or laptop),
 //! gives their waypoints and routes, and shows a NOS sonar's ForwardScan, also on the chartplotters
-//! themselves.
-//!
-//!   /              the chartplotters, and ForwardScan
-//!   /remote/       a chartplotter's screen (mfd-remote)
-//!   /forwardscan/  ForwardScan (neon-forwardscan)
-//!   /api/status    what the first page shows
+//! themselves. What it serves is the library ([`mfd_bosun::Bosun`]); this is its command line and sockets.
 
-mod auth;
-
-use axum::extract::{Request, State};
-use axum::http::{header, StatusCode, Uri};
-use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::ServiceExt;
-use axum::{Json, Router};
 use clap::Parser;
-use mfd_net::credentials::{self, Credentials};
-use mfd_net::discovery::Discovery;
-use mfd_remote::Remote;
-use neon_forwardscan::ForwardScan;
-use rust_embed::RustEmbed;
-use serde_json::json;
+use mfd_bosun::{Bosun, APP};
+use mfd_net::credentials;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-use tower::Layer;
-
-const APP: &str = "mfd-bosun";
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -81,16 +58,6 @@ struct Args {
     verbose: u8,
 }
 
-#[derive(RustEmbed)]
-#[folder = "web/"]
-struct Assets;
-
-#[derive(Clone)]
-struct App {
-    remote: Remote,
-    forwardscan: Option<neon_forwardscan::state::State>,
-}
-
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -99,19 +66,6 @@ async fn main() {
         "mfd_bosun={level},mfd_net={level},mfd_remote={level},neon_forwardscan={level}"
     )))
     .init();
-
-    let dir = args
-        .data_dir
-        .clone()
-        .unwrap_or_else(|| credentials::default_dir(APP));
-    let credentials = match Credentials::open(dir.join("credentials.json")) {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("cannot read the stored passwords: {e}");
-            std::process::exit(1);
-        }
-    };
-    log::info!("passwords kept in {}", credentials.path().display());
 
     let mut listeners = Vec::new();
     for ip in &args.listen {
@@ -127,24 +81,14 @@ async fn main() {
         }
     }
 
-    let discovery = Discovery::start();
-    for ip in &args.plotters {
-        discovery.add_address(SocketAddr::new(*ip, mfd_net::api::PORT));
-        discovery.add_address(SocketAddr::new(*ip, mfd_net::nos::PORT));
-        discovery.add_address(SocketAddr::new(*ip, mfd_net::garmin::CONTROL_PORT));
-        discovery.add_address(SocketAddr::new(*ip, mfd_net::furuno::PORT));
-    }
-    let remote = Remote::new(
-        discovery.clone(),
-        credentials,
-        "bosun@mfd-bosun.local",
-        "MFD Bosun",
-    );
-
-    let fs = if args.no_forwardscan {
-        None
-    } else {
-        match ForwardScan::start(neon_forwardscan::Options {
+    let bosun = match Bosun::start(mfd_bosun::Options {
+        data_dir: args
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| credentials::default_dir(APP)),
+        password: args.password.clone(),
+        plotters: args.plotters.clone(),
+        forwardscan: (!args.no_forwardscan).then(|| neon_forwardscan::Options {
             interface: args.interface.clone(),
             add_link_local: !args.no_link_local,
             allow_control: !args.read_only,
@@ -153,39 +97,15 @@ async fn main() {
                 port: args.port,
                 path: "/forwardscan/".into(),
             }),
-        }) {
-            Ok(fs) => Some(fs),
-            Err(e) => {
-                log::warn!("no ForwardScan: cannot receive {e}");
-                None
-            }
+        }),
+    }) {
+        Ok(b) => b,
+        Err(e) => {
+            log::error!("{e}");
+            std::process::exit(1);
         }
     };
-    if let Some(fs) = &fs {
-        tokio::spawn(follow_announcements(fs.state().clone(), discovery.clone()));
-    }
-
-    let app = App {
-        remote: remote.clone(),
-        forwardscan: fs.as_ref().map(|f| f.state().clone()),
-    };
-    let auth = auth::Auth::new(args.password.as_deref());
-    if auth.required() {
-        log::info!("the remote screens need a login");
-    }
-    let mut router = Router::new()
-        .route("/api/status", get(status))
-        .with_state(Arc::new(app))
-        .merge(auth.router())
-        .nest("/remote", remote.router());
-    if let Some(fs) = &fs {
-        router = router.nest("/forwardscan", fs.router());
-    }
-    // before routing: a nested router does not get its bare "/remote/"
-    let router = router
-        .fallback(get(asset))
-        .layer(middleware::from_fn_with_state(auth, auth::guard));
-    let router = middleware::from_fn(sections).layer(router);
+    let router = bosun.router();
 
     for ip in args.listen.iter().filter(|ip| !ip.is_unspecified()) {
         log::info!("pages at http://{}/", SocketAddr::new(*ip, args.port));
@@ -211,9 +131,7 @@ async fn main() {
     }
 
     shutdown().await;
-    if let Some(fs) = fs {
-        fs.stop().await;
-    }
+    bosun.stop().await;
 }
 
 /// A web server socket on `ip`. "::" is IPv6 and IPv4 on one socket (IPv6-only switched off explicitly,
@@ -253,113 +171,6 @@ fn serves(listen: &[IpAddr], a: IpAddr) -> bool {
     listen
         .iter()
         .any(|l| *l == a || l.is_unspecified() && (l.is_ipv6() || a.is_ipv4() == l.is_ipv4()))
-}
-
-/// The chartplotters announce themselves (for ForwardScan) with their name and address: that names them in
-/// the list. mDNS finds them, on the port of the service each advertises; but a NOS unit need not advertise
-/// its remote control there (a Zeus3S on 26.1 does not), while its announcement lists it in its `Services`:
-/// so that port is probed too. Only that one: other devices announce themselves as well.
-async fn follow_announcements(fs: neon_forwardscan::state::State, discovery: Discovery) {
-    let mut tick = tokio::time::interval(Duration::from_secs(5));
-    loop {
-        tick.tick().await;
-        let devices = fs.net.devices();
-        for (_, d) in devices {
-            if let Some(ip) = d.ip {
-                discovery.set_name(ip, &d.name);
-                if let Some(v) = &d.app_version {
-                    discovery.set_os_version(ip, v);
-                }
-                if let Some(port) = d.remote_port {
-                    discovery.add_address(SocketAddr::new(IpAddr::V4(ip), port));
-                }
-            }
-        }
-    }
-}
-
-/// `/remote` and `/forwardscan` redirect to `/remote/` and `/forwardscan/` (their pages use relative
-/// paths), and those go to the nested router as its "/" (which axum does not do by itself).
-async fn sections(mut req: Request, next: Next) -> Response {
-    const SECTIONS: [&str; 2] = ["/remote", "/forwardscan"];
-    let p = req.uri().path();
-    if SECTIONS.contains(&p) {
-        let to = match req.uri().query() {
-            Some(q) => format!("{p}/?{q}"),
-            None => format!("{p}/"),
-        };
-        return (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response();
-    }
-    if let Some(s) = SECTIONS.iter().find(|s| p.strip_prefix(**s) == Some("/")) {
-        let to = match req.uri().query() {
-            Some(q) => format!("{s}/index.html?{q}"),
-            None => format!("{s}/index.html"),
-        };
-        if let Ok(u) = to.parse() {
-            *req.uri_mut() = u;
-        }
-    }
-    next.run(req).await
-}
-
-async fn status(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
-    let plotters: Vec<_> = app
-        .remote
-        .discovery()
-        .list()
-        .iter()
-        .map(|p| {
-            let mut v =
-                serde_json::to_value(mfd_net::discovery::PlotterView::from(p)).unwrap_or_default();
-            v["hasPassword"] = app.remote.has_password(&p.serial).into();
-            v
-        })
-        .collect();
-    // Chartplotters we heard announce themselves but hold no address to reach: a failed probe never
-    // becomes a listed plotter, so without this they would be invisible. Show the ones not already
-    // listed, so the user sees they are there but on a network this computer is not on.
-    let listed: std::collections::HashSet<String> = plotters
-        .iter()
-        .filter_map(|v| v["address"].as_str().map(str::to_string))
-        .collect();
-    let unreachable: Vec<serde_json::Value> = app
-        .forwardscan
-        .as_ref()
-        .map(|s| {
-            s.net
-                .unreachable()
-                .into_iter()
-                .map(|(ll, d)| {
-                    let address = d.ip.unwrap_or(ll).to_string();
-                    let name = if d.name.is_empty() {
-                        d.model.clone()
-                    } else {
-                        d.name.clone()
-                    };
-                    json!({ "name": name, "model": d.model, "address": address })
-                })
-                .filter(|v| !listed.contains(v["address"].as_str().unwrap_or("")))
-                .collect()
-        })
-        .unwrap_or_default();
-    let forwardscan = app.forwardscan.as_ref().map(|s| {
-        let g = s.lock();
-        json!({ "sources": neon_forwardscan::state::sources(&s.net, &g) })
-    });
-    Json(json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "plotters": plotters,
-        "unreachable": unreachable,
-        "forwardScan": forwardscan,
-    }))
-}
-
-async fn asset(uri: Uri) -> Response {
-    let path = match uri.path().trim_start_matches('/') {
-        "" => "index.html",
-        p => p,
-    };
-    mfd_remote::serve_embedded::<Assets>(path)
 }
 
 async fn shutdown() {

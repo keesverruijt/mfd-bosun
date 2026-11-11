@@ -88,7 +88,8 @@ full-screen app with its own icon.
 For scripts and tests: `http://<mfd-bosun>:6022/remote/api/plotters/<serial>/screenshot.png` gives a
 picture of a chartplotter's screen (`/remote/api/plotters` lists the serials). It needs
 [ffmpeg](https://ffmpeg.org) on the computer running mfd-bosun; without it, `screenshot.h264` gives the
-picture as H.264, for `ffmpeg -i screenshot.h264 screenshot.png` elsewhere. This works for the NOS,
+picture as H.264 (about a second of the screen; the screenshot is its last picture), for
+`ffmpeg -i screenshot.h264 -vf reverse -frames:v 1 screenshot.png` elsewhere. This works for the NOS,
 Garmin and Raymarine units, whose screen passes through mfd-bosun, but not yet for NEON units, whose
 screen goes straight to the browser. A screenshot can take a few seconds, and up to 15 while the
 chartplotter's own app watches its screen too. With `--password`, log in first.

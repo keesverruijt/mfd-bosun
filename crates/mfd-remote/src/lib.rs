@@ -16,8 +16,8 @@
 //!   DELETE /api/plotters/{serial}/password  -> forgets it
 //!   GET    /api/plotters/{serial}/export.gpx -> its waypoints and routes (and a NOS unit's tracks), as GPX
 //!   GET    /api/plotters/{serial}/backup/{WaypointsRoutesTracks.usr|Settings.set} -> a NOS unit's own backups
-//!   GET    /api/plotters/{serial}/screenshot.h264 -> one picture of its screen, as H.264 (see [`screen::key_frame`])
-//!   GET    /api/plotters/{serial}/screenshot.png  -> the same as PNG, when ffmpeg is installed
+//!   GET    /api/plotters/{serial}/screenshot.h264 -> about a second of its screen, as H.264 (see [`screen::key_frame`])
+//!   GET    /api/plotters/{serial}/screenshot.png  -> its last picture as PNG, when ffmpeg is installed
 //!   GET    /signal?plotter=<serial>&key=<n> -> WebSocket to the chartplotter's /ws/receiver/<n>
 //!   GET    /signal/furuno?plotter=<serial>  -> WebSocket to a Furuno unit's remote (see [`furuno`])
 //!
@@ -507,7 +507,8 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
 /// app watches, only when its stream is restarted.
 const SCREENSHOT_WAIT: Duration = Duration::from_secs(15);
 
-/// One picture of a plotter's screen, as H.264 that decodes on its own; or the status and error to give instead.
+/// A plotter's screen as H.264 that decodes on its own, its last picture the screenshot; or the status and
+/// error to give instead.
 async fn screenshot(r: &Remote, serial: &str) -> Result<Vec<u8>, (StatusCode, String)> {
     let Some(p) = r.discovery.get(serial) else {
         return Err((StatusCode::NOT_FOUND, "no such chartplotter".into()));
@@ -551,7 +552,8 @@ async fn to_png(h264: &[u8]) -> Result<Vec<u8>, String> {
     use tokio::io::AsyncWriteExt;
     let mut child = tokio::process::Command::new("ffmpeg")
         .args(["-hide_banner", "-loglevel", "error", "-f", "h264", "-i", "pipe:0"])
-        .args(["-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1"])
+        // the last picture: the stream may start with a black one (see screen::key_frame)
+        .args(["-vf", "reverse", "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

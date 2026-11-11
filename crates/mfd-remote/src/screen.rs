@@ -455,9 +455,14 @@ fn local_ips() -> Vec<IpAddr> {
     v
 }
 
-/// One whole picture of a unit's screen, for a screenshot: an H.264 access unit (Annex B) that decodes on
-/// its own, an IDR frame after the stream's SPS and PPS. It comes from the unit's stream as a page gets it,
-/// shared with the pages watching. Waits at most `limit`; the error says why no picture came.
+/// How long a screenshot goes on taking frames after the one it starts from: a Raymarine Axiom starts a new
+/// stream with a black IDR frame, and its picture comes in the frames after it.
+const SCREENSHOT_SETTLE: Duration = Duration::from_secs(1);
+
+/// A unit's screen for a screenshot: H.264 (Annex B) that decodes on its own, from a whole picture made an
+/// IDR frame, after the stream's SPS and PPS, on for [`SCREENSHOT_SETTLE`]. Its last picture is the
+/// screenshot. It comes from the unit's stream as a page gets it, shared with the pages watching. Waits at
+/// most `limit` for the first picture; the error says why none came.
 pub async fn key_frame(
     feeds: &Feeds,
     p: &Plotter,
@@ -476,24 +481,43 @@ pub async fn key_frame(
     let since = Instant::now();
     let mut watching_since = since;
     let mut last_restart: Option<Instant> = None;
+    // from the first picture on, and since when
+    let mut out: Vec<u8> = Vec::new();
+    let mut started: Option<Instant> = None;
     while since.elapsed() < limit {
-        match tokio::time::timeout(Duration::from_millis(500), frames.recv()).await {
+        if let Some(t) = started {
+            if t.elapsed() >= SCREENSHOT_SETTLE {
+                break;
+            }
+        }
+        match tokio::time::timeout(Duration::from_millis(200), frames.recv()).await {
             Ok(Ok(f)) => {
                 if let Some(data) = starter.frame(&f.data, &f.params) {
-                    log::debug!(
-                        "screenshot of {serial}: {:.1} s",
-                        since.elapsed().as_secs_f32()
-                    );
-                    return Ok(h264::with_params(&data, &f.params));
+                    if started.is_none() {
+                        log::debug!(
+                            "screenshot of {serial}: a picture after {:.1} s",
+                            since.elapsed().as_secs_f32()
+                        );
+                        started = Some(Instant::now());
+                        out = h264::with_params(&data, &f.params);
+                    } else {
+                        out.extend_from_slice(&data);
+                    }
                 }
             }
-            // frames were lost: start at the next whole picture
+            // frames were lost: what came before stands; else start at the next whole picture
             Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                if started.is_some() {
+                    break;
+                }
                 starter.resync();
                 watching_since = Instant::now();
             }
             Ok(Err(broadcast::error::RecvError::Closed)) => break,
             Err(_) => {}
+        }
+        if started.is_some() {
+            continue;
         }
         // frames, but none to start from: as for a page, ask for an IDR frame now and then
         if watching_since.elapsed() > Duration::from_secs(4)
@@ -504,7 +528,11 @@ pub async fn key_frame(
             feeds.restart(serial);
         }
     }
-    Err(feeds.no_picture(serial))
+    if started.is_some() {
+        Ok(out)
+    } else {
+        Err(feeds.no_picture(serial))
+    }
 }
 
 /// The page's session with a NOS unit: this side is the WebRTC offerer.

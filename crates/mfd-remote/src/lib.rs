@@ -16,6 +16,8 @@
 //!   DELETE /api/plotters/{serial}/password  -> forgets it
 //!   GET    /api/plotters/{serial}/export.gpx -> its waypoints and routes (and a NOS unit's tracks), as GPX
 //!   GET    /api/plotters/{serial}/backup/{WaypointsRoutesTracks.usr|Settings.set} -> a NOS unit's own backups
+//!   GET    /api/plotters/{serial}/screenshot.h264 -> one picture of its screen, as H.264 (see [`screen::key_frame`])
+//!   GET    /api/plotters/{serial}/screenshot.png  -> the same as PNG, when ffmpeg is installed
 //!   GET    /signal?plotter=<serial>&key=<n> -> WebSocket to the chartplotter's /ws/receiver/<n>
 //!   GET    /signal/furuno?plotter=<serial>  -> WebSocket to a Furuno unit's remote (see [`furuno`])
 //!
@@ -113,6 +115,11 @@ impl Remote {
             )
             .route("/api/plotters/{serial}/export.gpx", get(export_gpx))
             .route("/api/plotters/{serial}/backup/{file}", get(nos_backup))
+            .route(
+                "/api/plotters/{serial}/screenshot.h264",
+                get(screenshot_h264),
+            )
+            .route("/api/plotters/{serial}/screenshot.png", get(screenshot_png))
             .route("/signal", get(signal))
             .route("/signal/furuno", get(signal_furuno))
             .fallback(get(asset))
@@ -494,6 +501,83 @@ async fn export_gpx(State(r): State<Remote>, Path(serial): Path<String>) -> Resp
         },
     };
     gpx_response(&p, &waypoints, &routes, &tracks, &serial)
+}
+
+/// How long a screenshot waits for a whole picture: a unit sends one about once a second, or, while another
+/// app watches, only when its stream is restarted.
+const SCREENSHOT_WAIT: Duration = Duration::from_secs(15);
+
+/// One picture of a plotter's screen, as H.264 that decodes on its own; or the status and error to give instead.
+async fn screenshot(r: &Remote, serial: &str) -> Result<Vec<u8>, (StatusCode, String)> {
+    let Some(p) = r.discovery.get(serial) else {
+        return Err((StatusCode::NOT_FOUND, "no such chartplotter".into()));
+    };
+    if p.screen.is_none() {
+        // a NEON unit's screen goes from the chartplotter to the browser, past this program
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "no screenshot of this chartplotter: its screen goes straight to the browser".into(),
+        ));
+    }
+    screen::key_frame(&r.feeds, &p, SCREENSHOT_WAIT)
+        .await
+        .map_err(|why| (StatusCode::GATEWAY_TIMEOUT, why.into()))
+}
+
+async fn screenshot_h264(State(r): State<Remote>, Path(serial): Path<String>) -> Response {
+    match screenshot(&r, &serial).await {
+        Ok(d) => ([(header::CONTENT_TYPE, "video/h264")], d).into_response(),
+        Err((status, e)) => fail(status, e),
+    }
+}
+
+async fn screenshot_png(State(r): State<Remote>, Path(serial): Path<String>) -> Response {
+    let d = match screenshot(&r, &serial).await {
+        Ok(d) => d,
+        Err((status, e)) => return fail(status, e),
+    };
+    match to_png(&d).await {
+        Ok(png) => ([(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Err(e) => {
+            log::info!("screenshot of {serial}: {e}");
+            fail(StatusCode::NOT_IMPLEMENTED, e)
+        }
+    }
+}
+
+/// An H.264 picture as PNG, by ffmpeg: there is no H.264 decoder in this program.
+async fn to_png(h264: &[u8]) -> Result<Vec<u8>, String> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-f", "h264", "-i", "pipe:0"])
+        .args(["-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| {
+            format!("a PNG screenshot needs ffmpeg on the computer running mfd-bosun ({e}); screenshot.h264 works without it")
+        })?;
+    let mut stdin = child.stdin.take().ok_or("ffmpeg: no stdin")?;
+    let input = h264.to_vec();
+    // written while the output is read, so that neither side waits for the other
+    let writer = tokio::spawn(async move {
+        let _ = stdin.write_all(&input).await;
+    });
+    let out = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
+        .await
+        .map_err(|_| "ffmpeg took too long".to_string())?
+        .map_err(|e| format!("ffmpeg: {e}"))?;
+    let _ = writer.await;
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!(
+            "ffmpeg could not decode the picture: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(out.stdout)
 }
 
 /// A GPX download from a plotter's waypoints, routes and tracks (deleted items are dropped by [`gpx::gpx`]).

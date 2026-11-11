@@ -328,6 +328,22 @@ fn rewrite_slice(
     Some(w.d)
 }
 
+/// The access unit with the stream's SPS and PPS (`params`, Annex B) before it, unless it has its own: so
+/// that a decoder can start from it alone.
+pub fn with_params(au: &[u8], params: &[u8]) -> Vec<u8> {
+    let nals = nal_units(au);
+    let has = |t: u8| nals.iter().any(|n| n[0] & 0x1f == t);
+    let mut out = Vec::with_capacity(au.len() + params.len() + 8);
+    if !(has(7) && has(8)) {
+        for n in nal_units(params) {
+            out.extend_from_slice(&[0, 0, 0, 1]);
+            out.extend_from_slice(n);
+        }
+    }
+    out.extend_from_slice(au);
+    out
+}
+
 /// The NAL units of an Annex B access unit (without their start codes).
 fn nal_units(d: &[u8]) -> Vec<&[u8]> {
     let mut starts = Vec::new();
@@ -531,6 +547,21 @@ mod tests {
         }
         eprintln!("{sent} access units out");
         std::fs::write(std::env::var("H264_OUT").unwrap(), out).unwrap();
+    }
+
+    #[test]
+    fn puts_the_parameters_before_a_frame_without_them() {
+        let params = [0, 0, 0, 1, 0x67, 0xaa, 0, 0, 0, 1, 0x68, 0xbb];
+        let idr = [0, 0, 0, 1, 0x65, 0xcc];
+        assert_eq!(
+            with_params(&idr, &params),
+            [0, 0, 0, 1, 0x67, 0xaa, 0, 0, 0, 1, 0x68, 0xbb, 0, 0, 0, 1, 0x65, 0xcc]
+        );
+        // its own SPS and PPS: as it is
+        let own = [
+            0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22, 0, 0, 0, 1, 0x65, 0xcc,
+        ];
+        assert_eq!(with_params(&own, &params), own);
     }
 
     #[test]

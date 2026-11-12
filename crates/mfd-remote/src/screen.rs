@@ -45,7 +45,13 @@ struct Feed {
     flowing: AtomicBool,
     /// The unit answered the last start of its stream (DESCRIBE, SETUP, PLAY), frames or not.
     answered: AtomicBool,
+    /// When the stream was last restarted: shared, so that a page and a screenshot waiting on the same
+    /// unit do not restart it in turn before an IDR frame can come.
+    last_restart: Mutex<Option<Instant>>,
 }
+
+/// How long a restarted stream gets to send an IDR frame before it is restarted again.
+const RESTART_COOLDOWN: Duration = Duration::from_secs(5);
 
 /// How long a unit may take to answer for its screen (DESCRIBE, SETUP, PLAY).
 const RTSP_START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -72,6 +78,7 @@ impl Feeds {
             flowing: AtomicBool::new(false),
             answered: AtomicBool::new(false),
             restart: Notify::new(),
+            last_restart: Mutex::new(None),
         });
         g.insert(serial.to_string(), feed.clone());
         tokio::spawn(self.clone().run(serial.to_string(), url, transport, feed));
@@ -90,9 +97,26 @@ impl Feeds {
             .is_some_and(|f| f.answered.load(Ordering::Relaxed))
     }
 
+    /// Why no picture comes from the unit's stream yet.
+    fn no_picture(&self, serial: &str) -> &'static str {
+        if self.flowing(serial) {
+            "no picture while another app watches this chartplotter's screen: close it"
+        } else if self.answered(serial) {
+            // a stream that fails before its first frame (an SPS the RTSP client refuses, say)
+            "no picture: the chartplotter's screen stream fails (see the log)"
+        } else {
+            "no picture: the chartplotter does not answer for its screen (RTSP, port 554)"
+        }
+    }
+
+    /// Restarts the stream, unless it was restarted less than `RESTART_COOLDOWN` ago.
     fn restart(&self, serial: &str) {
         if let Some(f) = self.0.lock().unwrap_or_else(|e| e.into_inner()).get(serial) {
-            f.restart.notify_one();
+            let mut last = f.last_restart.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_none_or(|t| t.elapsed() > RESTART_COOLDOWN) {
+                *last = Some(Instant::now());
+                f.restart.notify_one();
+            }
         }
     }
 
@@ -443,6 +467,81 @@ fn local_ips() -> Vec<IpAddr> {
     v
 }
 
+/// How long a screenshot goes on taking frames after the one it starts from: a Raymarine Axiom starts a new
+/// stream with a black IDR frame, and its picture comes in the frames after it.
+const SCREENSHOT_SETTLE: Duration = Duration::from_secs(1);
+
+/// A unit's screen for a screenshot: H.264 (Annex B) that decodes on its own, from a whole picture made an
+/// IDR frame, after the stream's SPS and PPS, on for [`SCREENSHOT_SETTLE`]. Its last picture is the
+/// screenshot. It comes from the unit's stream as a page gets it, shared with the pages watching. Waits at
+/// most `limit` for the first picture; the error says why none came.
+pub async fn key_frame(
+    feeds: &Feeds,
+    p: &Plotter,
+    limit: Duration,
+) -> Result<Vec<u8>, &'static str> {
+    let Some(screen) = &p.screen else {
+        return Err("this chartplotter's screen does not pass through mfd-bosun");
+    };
+    let serial = &p.serial;
+    let mut frames = feeds.watch(
+        serial,
+        screen.rtsp_url(p.addr.ip()),
+        screen.rtsp_transport(),
+    );
+    let mut starter = h264::Starter::default();
+    let since = Instant::now();
+    let mut watching_since = since;
+    // from the first picture on, and since when
+    let mut out: Vec<u8> = Vec::new();
+    let mut started: Option<Instant> = None;
+    while since.elapsed() < limit {
+        if let Some(t) = started {
+            if t.elapsed() >= SCREENSHOT_SETTLE {
+                break;
+            }
+        }
+        match tokio::time::timeout(Duration::from_millis(200), frames.recv()).await {
+            Ok(Ok(f)) => {
+                if let Some(data) = starter.frame(&f.data, &f.params) {
+                    if started.is_none() {
+                        log::debug!(
+                            "screenshot of {serial}: a picture after {:.1} s",
+                            since.elapsed().as_secs_f32()
+                        );
+                        started = Some(Instant::now());
+                        out = h264::with_params(&data, &f.params);
+                    } else {
+                        out.extend_from_slice(&data);
+                    }
+                }
+            }
+            // frames were lost: what came before stands; else start at the next whole picture
+            Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                if started.is_some() {
+                    break;
+                }
+                starter.resync();
+                watching_since = Instant::now();
+            }
+            Ok(Err(broadcast::error::RecvError::Closed)) => break,
+            Err(_) => {}
+        }
+        if started.is_some() {
+            continue;
+        }
+        // frames, but none to start from: as for a page, ask for an IDR frame now and then
+        if watching_since.elapsed() > Duration::from_secs(4) && feeds.flowing(serial) {
+            feeds.restart(serial);
+        }
+    }
+    if started.is_some() {
+        Ok(out)
+    } else {
+        Err(feeds.no_picture(serial))
+    }
+}
+
 /// The page's session with a NOS unit: this side is the WebRTC offerer.
 pub async fn serve(
     feeds: Feeds,
@@ -519,7 +618,6 @@ pub async fn serve(
     let mut channels: HashMap<str0m::channel::ChannelId, String> = HashMap::new();
     let mut frames: Option<broadcast::Receiver<Frame>> = None;
     let mut starter = h264::Starter::default();
-    let mut last_restart = Instant::now() - Duration::from_secs(10);
     // since when we wait for a frame to start from, and what the page was told of why it waits
     let mut watching_since = Instant::now();
     let mut told: Option<&str> = None;
@@ -726,18 +824,10 @@ pub async fn serve(
             && !starter.started()
             && watching_since.elapsed() > Duration::from_secs(4)
         {
-            let why = if feeds.flowing(&serial) {
-                if last_restart.elapsed() > Duration::from_secs(5) {
-                    last_restart = Instant::now();
-                    feeds.restart(&serial);
-                }
-                "no picture while another app watches this chartplotter's screen: close it"
-            } else if feeds.answered(&serial) {
-                // a stream that fails before its first frame (an SPS the RTSP client refuses, say)
-                "no picture: the chartplotter's screen stream fails (see the log)"
-            } else {
-                "no picture: the chartplotter does not answer for its screen (RTSP, port 554)"
-            };
+            if feeds.flowing(&serial) {
+                feeds.restart(&serial);
+            }
+            let why = feeds.no_picture(&serial);
             if told != Some(why) {
                 told = Some(why);
                 if to_browser.send(send("status", json!(why))).await.is_err() {

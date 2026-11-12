@@ -32,6 +32,6 @@ sha2 = "0.10"
 str0m = { version = "0.24", default-features = false }
 str0m-proto = { version = "0.7", default-features = false, features = ["dtls"] }
 time = "0.3"
-tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros"] }
+tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros", "process", "io-util"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false }
 url = "2.5.8"

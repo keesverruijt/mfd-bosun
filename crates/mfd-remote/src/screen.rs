@@ -45,7 +45,13 @@ struct Feed {
     flowing: AtomicBool,
     /// The unit answered the last start of its stream (DESCRIBE, SETUP, PLAY), frames or not.
     answered: AtomicBool,
+    /// When the stream was last restarted: shared, so that a page and a screenshot waiting on the same
+    /// unit do not restart it in turn before an IDR frame can come.
+    last_restart: Mutex<Option<Instant>>,
 }
+
+/// How long a restarted stream gets to send an IDR frame before it is restarted again.
+const RESTART_COOLDOWN: Duration = Duration::from_secs(5);
 
 /// How long a unit may take to answer for its screen (DESCRIBE, SETUP, PLAY).
 const RTSP_START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -72,6 +78,7 @@ impl Feeds {
             flowing: AtomicBool::new(false),
             answered: AtomicBool::new(false),
             restart: Notify::new(),
+            last_restart: Mutex::new(None),
         });
         g.insert(serial.to_string(), feed.clone());
         tokio::spawn(self.clone().run(serial.to_string(), url, transport, feed));
@@ -102,9 +109,14 @@ impl Feeds {
         }
     }
 
+    /// Restarts the stream, unless it was restarted less than `RESTART_COOLDOWN` ago.
     fn restart(&self, serial: &str) {
         if let Some(f) = self.0.lock().unwrap_or_else(|e| e.into_inner()).get(serial) {
-            f.restart.notify_one();
+            let mut last = f.last_restart.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_none_or(|t| t.elapsed() > RESTART_COOLDOWN) {
+                *last = Some(Instant::now());
+                f.restart.notify_one();
+            }
         }
     }
 
@@ -480,7 +492,6 @@ pub async fn key_frame(
     let mut starter = h264::Starter::default();
     let since = Instant::now();
     let mut watching_since = since;
-    let mut last_restart: Option<Instant> = None;
     // from the first picture on, and since when
     let mut out: Vec<u8> = Vec::new();
     let mut started: Option<Instant> = None;
@@ -520,11 +531,7 @@ pub async fn key_frame(
             continue;
         }
         // frames, but none to start from: as for a page, ask for an IDR frame now and then
-        if watching_since.elapsed() > Duration::from_secs(4)
-            && feeds.flowing(serial)
-            && last_restart.is_none_or(|t| t.elapsed() > Duration::from_secs(5))
-        {
-            last_restart = Some(Instant::now());
+        if watching_since.elapsed() > Duration::from_secs(4) && feeds.flowing(serial) {
             feeds.restart(serial);
         }
     }
@@ -611,7 +618,6 @@ pub async fn serve(
     let mut channels: HashMap<str0m::channel::ChannelId, String> = HashMap::new();
     let mut frames: Option<broadcast::Receiver<Frame>> = None;
     let mut starter = h264::Starter::default();
-    let mut last_restart = Instant::now() - Duration::from_secs(10);
     // since when we wait for a frame to start from, and what the page was told of why it waits
     let mut watching_since = Instant::now();
     let mut told: Option<&str> = None;
@@ -818,8 +824,7 @@ pub async fn serve(
             && !starter.started()
             && watching_since.elapsed() > Duration::from_secs(4)
         {
-            if feeds.flowing(&serial) && last_restart.elapsed() > Duration::from_secs(5) {
-                last_restart = Instant::now();
+            if feeds.flowing(&serial) {
                 feeds.restart(&serial);
             }
             let why = feeds.no_picture(&serial);

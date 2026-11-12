@@ -557,7 +557,7 @@ mod tests {
             with_params(&idr, &params),
             [0, 0, 0, 1, 0x67, 0xaa, 0, 0, 0, 1, 0x68, 0xbb, 0, 0, 0, 1, 0x65, 0xcc]
         );
-        // its own SPS and PPS: as it is
+        // its own SPS and PPS are the ones it was encoded with, which the stream's may not be: as it is
         let own = [
             0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22, 0, 0, 0, 1, 0x65, 0xcc,
         ];

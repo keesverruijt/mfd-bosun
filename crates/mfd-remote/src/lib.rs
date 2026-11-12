@@ -532,10 +532,22 @@ async fn screenshot_h264(State(r): State<Remote>, Path(serial): Path<String>) ->
     }
 }
 
+/// ffmpeg processes decoding screenshots at once, across all requests: each takes a core for a moment,
+/// and a small computer (a Raspberry Pi) has few.
+static PNG_DECODERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
 async fn screenshot_png(State(r): State<Remote>, Path(serial): Path<String>) -> Response {
     let d = match screenshot(&r, &serial).await {
         Ok(d) => d,
         Err((status, e)) => return fail(status, e),
+    };
+    let Ok(Ok(_decoder)) =
+        tokio::time::timeout(Duration::from_secs(10), PNG_DECODERS.acquire()).await
+    else {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many screenshots at once: try again",
+        );
     };
     match to_png(&d).await {
         Ok(png) => ([(header::CONTENT_TYPE, "image/png")], png).into_response(),
